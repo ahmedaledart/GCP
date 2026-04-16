@@ -1,0 +1,70 @@
+@import url('https://fonts.googleapis.com/css2?family=Cairo:wght@400;500;600;700;800;900&family=JetBrains+Mono:wght@400;500&display=swap');
+@import "tailwindcss";
+
+@theme {
+  --font-sans: "Cairo", ui-sans-serif, system-ui, sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, monospace;
+}
+
+:root {
+  --bg: #050A18;
+  --ink: #ffffff;
+}
+
+body {
+  font-family: var(--font-sans);
+  background-color: var(--bg);
+  color: var(--ink);
+}
+
+/* Custom scrollbar */
+::-webkit-scrollbar {
+  width: 8px;
+}
+
+::-webkit-scrollbar-track {
+  background: #0A1128;
+}
+
+::-webkit-scrollbar-thumb {
+  background: #1C2E5A;
+  border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: #2A4075;
+}
+
+.recharts-tooltip-wrapper {
+  direction: ltr;
+}
+
+/* RTL Support */
+[dir="rtl"] .recharts-tooltip-wrapper {
+  direction: ltr;
+}
+
+/* Markdown Styles */
+.markdown-body h1, .markdown-body h2, .markdown-body h3 {
+  color: #D4AF37;
+  font-weight: bold;
+  margin-top: 1.5em;
+  margin-bottom: 0.5em;
+}
+.markdown-body h1 { font-size: 2em; }
+.markdown-body h2 { font-size: 1.5em; }
+.markdown-body h3 { font-size: 1.25em; }
+.markdown-body p { margin-bottom: 1em; line-height: 1.8; }
+.markdown-body ul { list-style-type: disc; padding-inline-start: 2em; margin-bottom: 1em; }
+.markdown-body ol { list-style-type: decimal; padding-inline-start: 2em; margin-bottom: 1em; }
+.markdown-body li { margin-bottom: 0.5em; }
+.markdown-body strong { color: #ffffff; }
+.markdown-body blockquote { 
+  border-inline-start: 4px solid #D4AF37; 
+  padding-inline-start: 1em; 
+  color: #9ca3af; 
+  margin-bottom: 1em; 
+  background: rgba(28, 46, 90, 0.3);
+  padding: 1em;
+  border-radius: 0.5em;
+}

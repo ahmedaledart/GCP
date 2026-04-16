@@ -1,0 +1,119 @@
+{
+  "entities": {
+    "news_ticker": {
+      "title": "News Ticker",
+      "description": "Scrolling news items for the top of the page",
+      "type": "object",
+      "properties": {
+        "text_ar": { "type": "string", "description": "News text in Arabic" },
+        "text_en": { "type": "string", "description": "News text in English" },
+        "active": { "type": "boolean", "description": "Whether the news item is visible" },
+        "createdAt": { "type": "string", "format": "date-time", "description": "Creation timestamp" }
+      },
+      "required": ["text_ar", "text_en", "active"]
+    },
+    "site_settings": {
+      "title": "Site Settings",
+      "description": "Global configuration for the platform",
+      "type": "object",
+      "properties": {
+        "siteNameAr": { "type": "string" },
+        "siteNameEn": { "type": "string" },
+        "descriptionAr": { "type": "string" },
+        "descriptionEn": { "type": "string" },
+        "logoUrl": { "type": "string" },
+        "contactEmail": { "type": "string" },
+        "contactPhone": { "type": "string" },
+        "addressAr": { "type": "string" },
+        "addressEn": { "type": "string" },
+        "socialLinks": {
+          "type": "object",
+          "properties": {
+            "facebook": { "type": "string" },
+            "twitter": { "type": "string" },
+            "linkedin": { "type": "string" },
+            "instagram": { "type": "string" }
+          }
+        },
+        "adminPath": { "type": "string", "description": "Secret path for the admin panel" }
+      }
+    },
+    "commodities": {
+      "title": "Commodity Prices",
+      "description": "Market data for commodities, metals, and energy",
+      "type": "object",
+      "properties": {
+        "symbol": { "type": "string" },
+        "nameAr": { "type": "string" },
+        "nameEn": { "type": "string" },
+        "category": { "type": "string", "enum": ["energy", "metals", "agriculture", "currencies"] },
+        "price": { "type": "number" },
+        "change": { "type": "number" },
+        "changePercent": { "type": "number" },
+        "unit": { "type": "string" },
+        "lastUpdated": { "type": "string", "format": "date-time" }
+      }
+    },
+    "activity_logs": {
+      "title": "Activity Logs",
+      "description": "Audit trail for admin actions",
+      "type": "object",
+      "properties": {
+        "adminEmail": { "type": "string" },
+        "action": { "type": "string" },
+        "details": { "type": "string" },
+        "timestamp": { "type": "string", "format": "date-time" }
+      }
+    },
+    "user_messages": {
+      "title": "User Messages",
+      "description": "Messages submitted via the contact form",
+      "type": "object",
+      "properties": {
+        "name": { "type": "string" },
+        "email": { "type": "string", "format": "email" },
+        "subject": { "type": "string" },
+        "message": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "read": { "type": "boolean" }
+      },
+      "required": ["name", "email", "subject", "message", "read"]
+    },
+    "admins": {
+      "title": "Admins",
+      "description": "List of authorized admin emails",
+      "type": "object",
+      "properties": {
+        "email": { "type": "string", "format": "email" },
+        "addedBy": { "type": "string", "format": "email" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["email"]
+    },
+    "notifications": {
+      "title": "Notifications",
+      "description": "User notifications",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string" },
+        "titleAr": { "type": "string" },
+        "titleEn": { "type": "string" },
+        "messageAr": { "type": "string" },
+        "messageEn": { "type": "string" },
+        "type": { "type": "string", "enum": ["info", "alert", "success", "warning"] },
+        "read": { "type": "boolean" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["userId", "titleAr", "titleEn", "messageAr", "messageEn", "type", "read"]
+    }
+  },
+  "firestore": {
+    "news_ticker": { "schema": "news_ticker", "description": "Collection of news ticker items" },
+    "settings": { "schema": "site_settings", "description": "Global site settings (usually a single doc named 'global')" },
+    "commodities": { "schema": "commodities", "description": "Market data collection" },
+    "logs": { "schema": "activity_logs", "description": "Admin activity logs" },
+    "messages": { "schema": "user_messages", "description": "User contact form submissions" },
+    "admins": { "schema": "admins", "description": "Authorized admins" },
+    "notifications": { "schema": "notifications", "description": "User notifications" }
+  }
+}
