@@ -1,4 +1,4 @@
-import React, { useState, useRef, useEffect } from 'react';
+import React, { useState, useRef, useEffect, useMemo } from 'react';
 import { useMarketData } from '../context/MarketContext';
 import { useLanguage } from '../context/LanguageContext';
 import { ResponsiveContainer, LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend } from 'recharts';
@@ -45,17 +45,32 @@ export const AnalyticsCharts = () => {
   };
 
   // Prepare data for comparison chart (using normalized values for demonstration)
-  const comparisonData = currentData[0]?.history.map((point, index) => {
-    const dataPoint: any = { time: point.time };
-    currentData.forEach(item => {
-      // Normalize to percentage change from start for fair comparison
-      const startPrice = item.history[0].price;
-      const currentPrice = item.history[index].price;
-      const itemName = language === 'ar' ? item.nameAr : item.nameEn;
-      dataPoint[itemName] = ((currentPrice - startPrice) / startPrice) * 100;
+  const comparisonData = useMemo(() => {
+    if (!currentData || currentData.length === 0) return [];
+    
+    // Find the item with history to act as a reference for time points
+    const referenceItem = currentData.find(item => item.history && item.history.length > 0);
+    if (!referenceItem) return [];
+
+    return referenceItem.history.map((point, index) => {
+      const dataPoint: any = { time: point.time };
+      currentData.forEach(item => {
+        const itemName = language === 'ar' ? item.nameAr : item.nameEn;
+        
+        // Safety check for history existence and length
+        if (item.history && item.history[0] && item.history[index]) {
+          const startPrice = item.history[0].price || 1; // Avoid division by zero
+          const currentPrice = item.history[index].price || 0;
+          // Normalize to percentage change from start for fair comparison
+          dataPoint[itemName] = ((currentPrice - startPrice) / startPrice) * 100;
+        } else {
+          // Default to 0 change if history is missing for this point/item
+          dataPoint[itemName] = 0;
+        }
+      });
+      return dataPoint;
     });
-    return dataPoint;
-  });
+  }, [currentData, language]);
 
   const colors = ['#D4AF37', '#10B981', '#3B82F6', '#EF4444', '#8B5CF6', '#EC4899'];
 
@@ -271,9 +286,9 @@ export const AnalyticsCharts = () => {
                       <span className="text-sm text-gray-300">{language === 'ar' ? item.nameAr : item.nameEn}</span>
                     </div>
                     <div className="text-left" dir="ltr">
-                      <div className="text-sm font-bold text-white">{item.price.toFixed(2)}</div>
+                      <div className="text-sm font-bold text-white">{(item.price || 0).toFixed(2)}</div>
                       <div className={`text-xs ${item.trend === 'up' ? 'text-[#10B981]' : 'text-[#EF4444]'}`}>
-                        {item.trend === 'up' ? '+' : ''}{item.changePercent.toFixed(2)}%
+                        {item.trend === 'up' ? '+' : ''}{(item.changePercent || 0).toFixed(2)}%
                       </div>
                     </div>
                   </div>

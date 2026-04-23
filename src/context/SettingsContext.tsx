@@ -25,6 +25,7 @@ interface SiteSettings {
     energy: string;
     agriculture: string;
   };
+  isSiteActive: boolean;
 }
 
 const defaultSettings: SiteSettings = {
@@ -49,7 +50,8 @@ const defaultSettings: SiteSettings = {
     metals: '',
     energy: '',
     agriculture: ''
-  }
+  },
+  isSiteActive: true
 };
 
 interface SettingsContextType {

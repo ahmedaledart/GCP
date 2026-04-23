@@ -24,7 +24,7 @@ async function startServer() {
     for (let i = 0; i < retries; i++) {
       try {
         // Fetching BRENT and WTI
-        const response = await fetch(`https://commodities-api.com/api/latest?access_key=${apiKey}&base=USD&symbols=BRENT,WTI`, {
+        const response = await fetch(`https://commodities-api.com/api/latest?access_key=${encodeURIComponent(apiKey)}&base=USD&symbols=BRENT,WTI`, {
           signal: AbortSignal.timeout(10000) // 10 second timeout
         });
         

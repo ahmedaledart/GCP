@@ -6,12 +6,26 @@ import {
   Plus, Trash2, Save, ToggleLeft, ToggleRight, Shield, 
   LayoutDashboard, TrendingUp, Newspaper, Settings, 
   History, LogOut, ChevronRight, Globe, Image as ImageIcon,
-  FileText, Users, Database, Download, Upload, RefreshCw,
-  Bell, Search, Menu, X, MessageSquare, User, Zap, Mail, BarChart3
+  FileText, FileSpreadsheet, Users, Database, Download, Upload, RefreshCw,
+  Bell, Search, Menu, X, MessageSquare, User, Zap, Mail, BarChart3, AlertCircle
 } from 'lucide-react';
 import { onAuthStateChanged, signOut } from 'firebase/auth';
 import { useNavigate } from 'react-router-dom';
 import { motion, AnimatePresence } from 'motion/react';
+import { generateWithRetry } from '../services/geminiService';
+
+const safeFormatDate = (ts: any, type: 'date' | 'time' | 'both' = 'both') => {
+  try {
+    if (!ts?.toDate) return '';
+    const d = ts.toDate();
+    if (isNaN(d.getTime())) return '';
+    if (type === 'both') return d.toLocaleString();
+    if (type === 'date') return d.toLocaleDateString();
+    return d.toLocaleTimeString();
+  } catch {
+    return '';
+  }
+};
 
 // --- Types ---
 interface NewsItem {
@@ -32,7 +46,21 @@ interface Commodity {
   change: number;
   changePercent: number;
   unit: string;
+  currency?: string;
   lastUpdated: any;
+}
+
+interface Report {
+  id: string;
+  titleAr: string;
+  titleEn: string;
+  contentAr: string;
+  contentEn: string;
+  status: 'draft' | 'published';
+  topic: string;
+  author: string;
+  publishedAt?: any;
+  createdAt: any;
 }
 
 interface SiteSettings {
@@ -58,9 +86,11 @@ interface SiteSettings {
     energy: string;
     agriculture: string;
   };
+  isSiteActive?: boolean;
+  geminiApiKey?: string;
 }
 
-type AdminTab = 'overview' | 'market' | 'news_ticker' | 'content' | 'settings' | 'logs' | 'messages' | 'admins';
+type AdminTab = 'overview' | 'market' | 'news_ticker' | 'reports' | 'content' | 'settings' | 'logs' | 'messages' | 'admins';
 
 export const Admin = () => {
   const { t, language } = useLanguage();
@@ -82,6 +112,7 @@ export const Admin = () => {
   const [messages, setMessages] = useState<any[]>([]);
   const [stats, setStats] = useState<any>(null);
   const [adminsList, setAdminsList] = useState<any[]>([]);
+  const [reports, setReports] = useState<Report[]>([]);
   
   const ADMIN_EMAIL = "ahmedhmeda67@gmail.com";
 
@@ -124,6 +155,27 @@ export const Admin = () => {
     return () => unsubscribe();
   }, []);
 
+  useEffect(() => {
+    if (isAdmin && !isSuperAdmin && adminPermissions && adminPermissions.length > 0) {
+      if (!adminPermissions.includes('view_dashboard')) {
+        const fallbackTabs: Record<string, AdminTab> = {
+          'manage_commodities': 'market',
+          'manage_news': 'news_ticker',
+          'manage_content': 'content',
+          'manage_settings': 'settings',
+          'manage_messages': 'messages',
+          'view_logs': 'logs'
+        };
+        for (const [perm, tab] of Object.entries(fallbackTabs)) {
+          if (adminPermissions.includes(perm)) {
+            setActiveTab(tab);
+            break;
+          }
+        }
+      }
+    }
+  }, [isAdmin, isSuperAdmin, adminPermissions]);
+
   // --- Data Fetching ---
   useEffect(() => {
     if (!isAdmin) return;
@@ -141,7 +193,43 @@ export const Admin = () => {
     const commoditiesUnsubscribe = onSnapshot(
       collection(db, 'commodities'),
       (snapshot) => {
-        setCommodities(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })) as Commodity[]);
+        const mapped = snapshot.docs.map(doc => {
+          const docData = doc.data();
+          let parsedCategory = docData.category || '';
+          if (!parsedCategory && docData.sectorEn) {
+            if (docData.sectorEn === 'Energy') parsedCategory = 'energy';
+            if (docData.sectorEn === 'Metals') parsedCategory = 'metals';
+            if (docData.sectorEn === 'Agriculture') parsedCategory = 'agriculture';
+            if (docData.sectorEn === 'Indices') parsedCategory = 'currencies';
+          }
+          let sectorDisplay = docData.sectorAr || docData.category;
+          if (parsedCategory === 'energy') sectorDisplay = 'طاقة';
+          if (parsedCategory === 'metals') sectorDisplay = 'معادن';
+          if (parsedCategory === 'agriculture') sectorDisplay = 'زراعة';
+          if (parsedCategory === 'currencies') sectorDisplay = 'عملات';
+
+          return { 
+            id: doc.id, 
+            ...docData, 
+            category: parsedCategory,
+            sectorDisplay,
+            high: docData.high || docData.price || 0,
+            low: docData.low || docData.price || 0,
+            change: docData.change || 0,
+            changePercent: docData.changePercent || 0,
+            trend: docData.trend || (docData.change >= 0 ? 'up' : 'down')
+          };
+        }) as any[];
+        
+        // Sort items by sector then by symbol
+        mapped.sort((a, b) => {
+          if (a.sectorDisplay !== b.sectorDisplay) {
+            return (a.sectorDisplay || '').localeCompare(b.sectorDisplay || '');
+          }
+          return (a.symbol || '').localeCompare(b.symbol || '');
+        });
+
+        setCommodities(mapped);
       },
       (err) => handleFirestoreError(err, OperationType.GET, 'commodities')
     );
@@ -182,6 +270,15 @@ export const Admin = () => {
         setAdminsList(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })));
       },
       (err) => handleFirestoreError(err, OperationType.GET, 'admins')
+    );
+
+    // Reports
+    const reportsUnsubscribe = onSnapshot(
+      query(collection(db, 'reports'), orderBy('createdAt', 'desc')),
+      (snapshot) => {
+        setReports(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })) as Report[]);
+      },
+      (err) => handleFirestoreError(err, OperationType.GET, 'reports')
     );
 
     // Stats
@@ -257,7 +354,7 @@ export const Admin = () => {
     const rows = data.map(obj => 
       Object.values(obj).map(val => {
         if (val && typeof val === 'object' && val !== null && 'toDate' in val) {
-          return `"${(val as any).toDate().toLocaleString()}"`;
+          return `"${safeFormatDate(val)}"`;
         }
         return typeof val === 'string' ? `"${val.replace(/"/g, '""')}"` : val;
       }).join(',')
@@ -347,14 +444,15 @@ export const Admin = () => {
         </div>
 
         <nav className="flex-grow px-3 space-y-2 overflow-y-auto">
-          <SidebarItem id="overview" icon={LayoutDashboard} label="نظرة عامة" />
-          {(isSuperAdmin || adminPermissions.includes('manage_commodities')) && <SidebarItem id="market" icon={TrendingUp} label="بيانات السوق" />}
-          {(isSuperAdmin || adminPermissions.includes('manage_news')) && <SidebarItem id="news_ticker" icon={Bell} label="شريط الأخبار" />}
-          {(isSuperAdmin || adminPermissions.includes('manage_settings')) && <SidebarItem id="content" icon={FileText} label="المحتوى والصفحات" />}
-          {(isSuperAdmin || adminPermissions.includes('manage_settings')) && <SidebarItem id="settings" icon={Settings} label="الإعدادات العامة" />}
-          {(isSuperAdmin || adminPermissions.includes('manage_messages')) && <SidebarItem id="messages" icon={MessageSquare} label="الرسائل والطلبات" />}
+          {(isSuperAdmin || adminPermissions?.includes('view_dashboard')) && <SidebarItem id="overview" icon={LayoutDashboard} label="نظرة عامة" />}
+          {(isSuperAdmin || adminPermissions?.includes('manage_commodities')) && <SidebarItem id="market" icon={TrendingUp} label="بيانات السوق" />}
+          {(isSuperAdmin || adminPermissions?.includes('manage_news')) && <SidebarItem id="news_ticker" icon={Bell} label="شريط الأخبار" />}
+          {(isSuperAdmin || adminPermissions?.includes('manage_content')) && <SidebarItem id="reports" icon={FileSpreadsheet} label="إدارة التقارير الذكية" />}
+          {(isSuperAdmin || adminPermissions?.includes('manage_content')) && <SidebarItem id="content" icon={FileText} label="المحتوى والصفحات" />}
+          {(isSuperAdmin || adminPermissions?.includes('manage_settings')) && <SidebarItem id="settings" icon={Settings} label="الإعدادات العامة" />}
+          {(isSuperAdmin || adminPermissions?.includes('manage_messages')) && <SidebarItem id="messages" icon={MessageSquare} label="الرسائل والطلبات" />}
           {isSuperAdmin && <SidebarItem id="admins" icon={Users} label="المدراء" />}
-          {isSuperAdmin && <SidebarItem id="logs" icon={History} label="سجل العمليات" />}
+          {(isSuperAdmin || adminPermissions?.includes('view_logs')) && <SidebarItem id="logs" icon={History} label="سجل العمليات" />}
         </nav>
 
         <div className="p-4 border-t border-[#1C2E5A]">
@@ -379,6 +477,7 @@ export const Admin = () => {
               {activeTab === 'overview' && 'لوحة التحكم الرئيسية'}
               {activeTab === 'market' && 'إدارة بيانات السوق'}
               {activeTab === 'news_ticker' && 'إدارة شريط الأخبار'}
+              {activeTab === 'reports' && 'إدارة التقارير التحليلية'}
               {activeTab === 'content' && 'إدارة المحتوى'}
               {activeTab === 'settings' && 'إعدادات المنصة'}
               {activeTab === 'messages' && 'الرسائل والطلبات'}
@@ -424,15 +523,18 @@ export const Admin = () => {
                 onInitializeStats={initializeStats}
                 onResetStats={resetStats}
                 setActiveTab={setActiveTab}
+                isSuperAdmin={isSuperAdmin}
+                adminPermissions={adminPermissions}
               />
             )}
-            {activeTab === 'market' && <MarketSection commodities={commodities} logAction={logAction} onDownload={handleDownload} />}
-            {activeTab === 'news_ticker' && <NewsTickerSection news={news} logAction={logAction} />}
-            {activeTab === 'content' && <ContentSection logAction={logAction} />}
-            {activeTab === 'settings' && <SettingsSection settings={settings} logAction={logAction} />}
-            {activeTab === 'messages' && <MessagesSection messages={messages} logAction={logAction} onDownload={handleDownload} />}
+            {activeTab === 'market' && <MarketSection commodities={commodities} logAction={logAction} onDownload={handleDownload} isSuperAdmin={isSuperAdmin} adminPermissions={adminPermissions} />}
+            {activeTab === 'news_ticker' && <NewsTickerSection news={news} logAction={logAction} isSuperAdmin={isSuperAdmin} adminPermissions={adminPermissions} />}
+            {activeTab === 'reports' && <ReportsManagementSection reports={reports} logAction={logAction} isSuperAdmin={isSuperAdmin} adminPermissions={adminPermissions} commodities={commodities} settings={settings} />}
+            {activeTab === 'content' && <ContentSection logAction={logAction} isSuperAdmin={isSuperAdmin} adminPermissions={adminPermissions} />}
+            {activeTab === 'settings' && <SettingsSection settings={settings} logAction={logAction} isSuperAdmin={isSuperAdmin} adminPermissions={adminPermissions} />}
+            {activeTab === 'messages' && <MessagesSection messages={messages} logAction={logAction} onDownload={handleDownload} isSuperAdmin={isSuperAdmin} adminPermissions={adminPermissions} />}
             {activeTab === 'admins' && <AdminsSection adminsList={adminsList} logAction={logAction} currentUserEmail={auth.currentUser?.email} />}
-            {activeTab === 'logs' && <LogsSection logs={logs} onDownload={handleDownload} />}
+            {activeTab === 'logs' && <LogsSection logs={logs} onDownload={handleDownload} isSuperAdmin={isSuperAdmin} adminPermissions={adminPermissions} />}
           </motion.div>
         </AnimatePresence>
       </main>
@@ -484,7 +586,7 @@ const ContentSection = ({ logAction }: any) => {
   );
 };
 
-const OverviewSection = ({ newsCount, commoditiesCount, logs, stats, messagesCount, onInitializeStats, onResetStats, setActiveTab }: any) => {
+const OverviewSection = ({ newsCount, commoditiesCount, logs, stats, messagesCount, onInitializeStats, onResetStats, setActiveTab, isSuperAdmin, adminPermissions }: any) => {
   return (
     <div className="space-y-8">
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-6">
@@ -492,7 +594,13 @@ const OverviewSection = ({ newsCount, commoditiesCount, logs, stats, messagesCou
         <StatCard title="الرسائل الجديدة" value={messagesCount} icon={MessageSquare} color="red" />
         <StatCard title="إجمالي الأخبار" value={newsCount} icon={Newspaper} color="blue" />
         <StatCard title="السلع المراقبة" value={commoditiesCount} icon={TrendingUp} color="gold" />
-        <StatCard title="عمليات اليوم" value={logs.filter((l: any) => new Date(l.timestamp?.toDate()).toDateString() === new Date().toDateString()).length} icon={History} color="green" />
+        {(isSuperAdmin || adminPermissions?.includes('view_logs')) && (
+          <StatCard title="عمليات اليوم" value={logs.filter((l: any) => {
+            try {
+               return l.timestamp?.toDate() && !isNaN(l.timestamp.toDate().getTime()) && new Date(l.timestamp.toDate()).toDateString() === new Date().toDateString();
+            } catch(e) { return false; }
+          }).length} icon={History} color="green" />
+        )}
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
@@ -502,56 +610,66 @@ const OverviewSection = ({ newsCount, commoditiesCount, logs, stats, messagesCou
               <Zap size={20} className="text-[#D4AF37]" /> إجراءات سريعة
             </h3>
             <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-              <button 
-                onClick={() => setActiveTab('news_ticker')}
-                className="p-4 bg-[#1C2E5A]/30 border border-[#1C2E5A] rounded-xl hover:border-[#D4AF37] transition-all text-center group"
-              >
-                <Plus size={24} className="mx-auto mb-2 text-[#D4AF37] group-hover:scale-110 transition-transform" />
-                <span className="text-white text-xs font-bold">إضافة خبر</span>
-              </button>
-              <button 
-                onClick={() => setActiveTab('market')}
-                className="p-4 bg-[#1C2E5A]/30 border border-[#1C2E5A] rounded-xl hover:border-[#D4AF37] transition-all text-center group"
-              >
-                <TrendingUp size={24} className="mx-auto mb-2 text-[#D4AF37] group-hover:scale-110 transition-transform" />
-                <span className="text-white text-xs font-bold">تحديث أسعار</span>
-              </button>
-              <button 
-                onClick={() => setActiveTab('messages')}
-                className="p-4 bg-[#1C2E5A]/30 border border-[#1C2E5A] rounded-xl hover:border-[#D4AF37] transition-all text-center group"
-              >
-                <Mail size={24} className="mx-auto mb-2 text-[#D4AF37] group-hover:scale-110 transition-transform" />
-                <span className="text-white text-xs font-bold">الرسائل</span>
-              </button>
-              <button 
-                onClick={() => setActiveTab('settings')}
-                className="p-4 bg-[#1C2E5A]/30 border border-[#1C2E5A] rounded-xl hover:border-[#D4AF37] transition-all text-center group"
-              >
-                <Settings size={24} className="mx-auto mb-2 text-[#D4AF37] group-hover:scale-110 transition-transform" />
-                <span className="text-white text-xs font-bold">الإعدادات</span>
-              </button>
+              {(isSuperAdmin || adminPermissions?.includes('manage_news')) && (
+                <button 
+                  onClick={() => setActiveTab('news_ticker')}
+                  className="p-4 bg-[#1C2E5A]/30 border border-[#1C2E5A] rounded-xl hover:border-[#D4AF37] transition-all text-center group"
+                >
+                  <Plus size={24} className="mx-auto mb-2 text-[#D4AF37] group-hover:scale-110 transition-transform" />
+                  <span className="text-white text-xs font-bold">إضافة خبر</span>
+                </button>
+              )}
+              {(isSuperAdmin || adminPermissions?.includes('manage_commodities')) && (
+                <button 
+                  onClick={() => setActiveTab('market')}
+                  className="p-4 bg-[#1C2E5A]/30 border border-[#1C2E5A] rounded-xl hover:border-[#D4AF37] transition-all text-center group"
+                >
+                  <TrendingUp size={24} className="mx-auto mb-2 text-[#D4AF37] group-hover:scale-110 transition-transform" />
+                  <span className="text-white text-xs font-bold">تحديث أسعار</span>
+                </button>
+              )}
+              {(isSuperAdmin || adminPermissions?.includes('manage_messages')) && (
+                <button 
+                  onClick={() => setActiveTab('messages')}
+                  className="p-4 bg-[#1C2E5A]/30 border border-[#1C2E5A] rounded-xl hover:border-[#D4AF37] transition-all text-center group"
+                >
+                  <Mail size={24} className="mx-auto mb-2 text-[#D4AF37] group-hover:scale-110 transition-transform" />
+                  <span className="text-white text-xs font-bold">الرسائل</span>
+                </button>
+              )}
+              {(isSuperAdmin || adminPermissions?.includes('manage_settings')) && (
+                <button 
+                  onClick={() => setActiveTab('settings')}
+                  className="p-4 bg-[#1C2E5A]/30 border border-[#1C2E5A] rounded-xl hover:border-[#D4AF37] transition-all text-center group"
+                >
+                  <Settings size={24} className="mx-auto mb-2 text-[#D4AF37] group-hover:scale-110 transition-transform" />
+                  <span className="text-white text-xs font-bold">الإعدادات</span>
+                </button>
+              )}
             </div>
           </div>
 
-          <div className="bg-[#121E3D] border border-[#1C2E5A] rounded-2xl p-6">
-            <h3 className="text-lg font-bold text-white mb-6">آخر النشاطات</h3>
-            <div className="space-y-4">
-              {logs.slice(0, 5).map((log: any) => (
-                <div key={log.id} className="flex items-center gap-4 p-4 bg-[#1C2E5A]/30 rounded-xl border border-[#1C2E5A]">
-                  <div className="w-10 h-10 rounded-full bg-[#D4AF37]/10 flex items-center justify-center text-[#D4AF37]">
-                    <History size={20} />
+          {(isSuperAdmin || adminPermissions?.includes('view_logs')) && (
+            <div className="bg-[#121E3D] border border-[#1C2E5A] rounded-2xl p-6">
+              <h3 className="text-lg font-bold text-white mb-6">آخر النشاطات</h3>
+              <div className="space-y-4">
+                {logs.slice(0, 5).map((log: any) => (
+                  <div key={log.id} className="flex items-center gap-4 p-4 bg-[#1C2E5A]/30 rounded-xl border border-[#1C2E5A]">
+                    <div className="w-10 h-10 rounded-full bg-[#D4AF37]/10 flex items-center justify-center text-[#D4AF37]">
+                      <History size={20} />
+                    </div>
+                    <div className="flex-grow">
+                      <div className="text-white font-medium">{log.action}</div>
+                      <div className="text-gray-400 text-xs">{log.details}</div>
+                    </div>
+                    <div className="text-gray-500 text-xs">
+                      {safeFormatDate(log.timestamp)}
+                    </div>
                   </div>
-                  <div className="flex-grow">
-                    <div className="text-white font-medium">{log.action}</div>
-                    <div className="text-gray-400 text-xs">{log.details}</div>
-                  </div>
-                  <div className="text-gray-500 text-xs">
-                    {log.timestamp?.toDate().toLocaleString()}
-                  </div>
-                </div>
-              ))}
+                ))}
+              </div>
             </div>
-          </div>
+          )}
         </div>
 
         <div className="space-y-8">
@@ -578,7 +696,7 @@ const OverviewSection = ({ newsCount, commoditiesCount, logs, stats, messagesCou
                 </div>
                 <div className="flex justify-between items-center p-3 bg-[#1C2E5A]/30 rounded-xl">
                   <span className="text-gray-400 text-sm">آخر تصفير</span>
-                  <span className="text-gray-500 text-[10px]">{stats.lastReset?.toDate().toLocaleDateString()}</span>
+                  <span className="text-gray-500 text-[10px]">{safeFormatDate(stats.lastReset, 'date')}</span>
                 </div>
                 <button 
                   onClick={onResetStats}
@@ -639,23 +757,116 @@ const StatCard = ({ title, value, icon: Icon, color }: any) => {
   );
 };
 
-const MarketSection = ({ commodities, logAction, onDownload }: any) => {
+const MarketSection = ({ commodities, logAction, onDownload, isSuperAdmin, adminPermissions }: any) => {
   const [editingId, setEditingId] = useState<string | null>(null);
   const [formData, setFormData] = useState<any>({});
+  const [selectedIds, setSelectedIds] = useState<string[]>([]);
+  const [showImportModal, setShowImportModal] = useState(false);
+  const [importSector, setImportSector] = useState('energy');
+  const [importCurrency, setImportCurrency] = useState('USD');
+
+  const canEdit = isSuperAdmin || adminPermissions?.includes('manage_commodities');
+  const canAddDelete = isSuperAdmin || adminPermissions?.includes('add_delete_commodities');
+  const canImport = isSuperAdmin || adminPermissions?.includes('import_csv');
+  const canExport = isSuperAdmin || adminPermissions?.includes('export_data');
+
+  // Helper to normalize and unify Arabic/English text for robust search and IDs
+  const normalizeForSearch = (text: string) => {
+    if (!text) return '';
+    return text
+      .trim()
+      .replace(/[أإآ]/g, 'ا')
+      .replace(/ة/g, 'ه')
+      .replace(/ى/g, 'ي')
+      .replace(/\s+/g, '') // Remove all mapping spaces for strict ID matching
+      .toLowerCase();
+  };
+
+  // Helper to generate a unique deterministic ID from symbol or name
+  const getCommodityId = (item: any) => {
+    const symbol = normalizeForSearch(item.symbol || '');
+    const nameAr = normalizeForSearch(item.nameAr || '');
+    if (symbol) return `comm_${symbol}`;
+    return `comm_${nameAr}`;
+  };
+
+  // Helper to update history array
+  const getUpdatedHistory = (existingHistory: any[], newPrice: number) => {
+    const timeStr = new Date().toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false });
+    const newPoint = { time: timeStr, price: newPrice };
+    
+    if (!existingHistory || existingHistory.length === 0) {
+      return Array(12).fill(newPoint);
+    }
+    
+    const updated = [...existingHistory, newPoint].slice(-24);
+    return updated;
+  };
+
+  // Function to find all duplicates and merge into one master record
+  const consolidateDuplicates = async (searchSymbol: string, searchNameAr: string, freshData: any) => {
+    const normSymbol = normalizeForSearch(searchSymbol);
+    const normNameAr = normalizeForSearch(searchNameAr);
+
+    // Find ALL matches across the collection
+    const matches = commodities.filter((c: any) => {
+      const cSymbol = normalizeForSearch(c.symbol);
+      const cNameAr = normalizeForSearch(c.nameAr);
+      return (normSymbol && cSymbol === normSymbol) || (normNameAr && cNameAr === normNameAr);
+    });
+
+    const deterministicId = getCommodityId(freshData);
+    const masterDocRef = doc(db, 'commodities', deterministicId);
+
+    // Filter matches to find existing Master or Slave records
+    const slaves = matches.filter((m: any) => m.id !== deterministicId);
+    
+    // 1. Delete all slaves (Random IDs or old IDs)
+    for (const slave of slaves) {
+      try {
+        await deleteDoc(doc(db, 'commodities', slave.id));
+        console.log(`Deleted duplicate commodity record: ${slave.id}`);
+      } catch (e) {
+        console.error(`Failed to delete slave ${slave.id}`, e);
+      }
+    }
+
+    // 2. Upsert the data into the Master record
+    await setDoc(masterDocRef, freshData, { merge: true });
+    return deterministicId;
+  };
 
   const handleEdit = (item: any) => {
+    if (!canEdit) return;
     setEditingId(item.id);
     setFormData(item);
   };
 
   const handleSave = async () => {
-    if (!editingId) return;
+    if (!editingId || !canEdit) return;
     try {
-      await updateDoc(doc(db, 'commodities', editingId), {
+      const existing = commodities.find((c: any) => c.id === editingId);
+      const oldPrice = existing?.price || formData.price;
+      const newPrice = Number(formData.price);
+      const change = Number((newPrice - oldPrice).toFixed(2));
+      const changePercent = oldPrice > 0 ? Number(((change / oldPrice) * 100).toFixed(2)) : 0;
+
+      const updatedData = {
         ...formData,
+        price: newPrice,
+        prevClose: oldPrice,
+        change,
+        changeAmount: change,
+        changePercent,
+        high: Math.max(existing?.high || newPrice, newPrice),
+        low: Math.min(existing?.low || newPrice, newPrice),
+        trend: change >= 0 ? 'up' : 'down',
+        history: getUpdatedHistory(existing?.history || [], newPrice),
         lastUpdated: serverTimestamp()
-      });
-      await logAction('تعديل سلعة', `تم تعديل بيانات ${formData.nameAr}`);
+      };
+
+      await updateDoc(doc(db, 'commodities', editingId), updatedData);
+      await logAction('تعديل سلعة', `تم تعديل بيانات ${formData.nameAr} وحساب الفوارق تلقائياً`);
       setEditingId(null);
     } catch (e) {
       handleFirestoreError(e, OperationType.UPDATE, `commodities/${editingId}`);
@@ -663,60 +874,166 @@ const MarketSection = ({ commodities, logAction, onDownload }: any) => {
   };
 
   const handleImportCSV = (e: any) => {
+    if (!canImport) return;
     const file = e.target.files[0];
     if (!file) return;
     const reader = new FileReader();
     reader.onload = async (event: any) => {
       const text = event.target.result;
-      const rows = text.split('\n').slice(1); // Skip header
+      const rows = text.split('\n').filter((r:string) => r.trim()).slice(1);
+      let processedCount = 0;
+      
       for (const row of rows) {
-        const [symbol, nameAr, nameEn, category, price, unit] = row.split(',');
-        if (symbol && price) {
+        const parts = row.split(',');
+        if (parts.length >= 6) {
+          const [symbolRaw, nameArRaw, nameEnRaw, categoryRaw, priceRaw, unitRaw] = parts;
+          const symbolInput = symbolRaw.trim();
+          const nameArInput = nameArRaw.trim();
+          const nameEnInput = nameEnRaw.trim();
+          const priceInput = parseFloat(priceRaw) || 0;
+          const unitInput = unitRaw.trim();
+          const categoryInput = categoryRaw.trim() || importSector;
+
+          // Aggressive matching: Symbol or Arabic Name
+          const existing = commodities.find((c: any) => 
+            (c.symbol && normalizeForSearch(c.symbol) === normalizeForSearch(symbolInput)) || 
+            (c.nameAr && normalizeForSearch(c.nameAr) === normalizeForSearch(nameArInput))
+          );
+          
+          const oldPrice = existing?.price || priceInput;
+          const change = Number((priceInput - oldPrice).toFixed(2));
+          const changePercent = oldPrice > 0 ? Number(((change / oldPrice) * 100).toFixed(2)) : 0;
+          
+          const commodityData: any = {
+            symbol: symbolInput,
+            nameAr: nameArInput,
+            nameEn: nameEnInput,
+            category: categoryInput,
+            price: priceInput,
+            prevClose: oldPrice,
+            change,
+            changeAmount: change,
+            changePercent,
+            high: Math.max(existing?.high || priceInput, priceInput),
+            low: Math.min(existing?.low || priceInput, priceInput),
+            trend: change >= 0 ? 'up' : 'down',
+            unit: unitInput,
+            currency: importCurrency,
+            history: getUpdatedHistory(existing?.history || [], priceInput),
+            lastUpdated: serverTimestamp()
+          };
+
           try {
-            await addDoc(collection(db, 'commodities'), {
-              symbol, nameAr, nameEn, category, 
-              price: parseFloat(price), 
-              change: 0, changePercent: 0, 
-              unit, lastUpdated: serverTimestamp()
-            });
+            await consolidateDuplicates(symbolInput, nameArInput, commodityData);
+            processedCount++;
           } catch (err) {
             console.error("Import error", err);
           }
         }
       }
-      await logAction('استيراد بيانات', `تم استيراد بيانات من ملف CSV`);
-      alert('تم استيراد البيانات بنجاح');
+      await logAction('دمج واستيراد بيانات', `تم تنقية ودمج ${processedCount} سلع من ملف CSV`);
+      alert(`تم بنجاح تنقية الأسماء ودمج ${processedCount} سلعة!`);
+      setShowImportModal(false);
     };
     reader.readAsText(file);
+    e.target.value = null;
   };
 
   const handleDelete = async (id: string) => {
+    if (!canAddDelete) return;
     if (!window.confirm('هل أنت متأكد من حذف هذه السلعة؟')) return;
     try {
       await deleteDoc(doc(db, 'commodities', id));
       await logAction('حذف سلعة', `تم حذف السلعة: ${id}`);
+      setSelectedIds(selectedIds.filter(selectedId => selectedId !== id));
     } catch (e) {
       handleFirestoreError(e, OperationType.DELETE, `commodities/${id}`);
     }
   };
 
+  const handleDeleteSelected = async () => {
+    if (!canAddDelete) return;
+    if (selectedIds.length === 0) return;
+    if (!window.confirm(`هل أنت متأكد من حذف ${selectedIds.length} عنصر/عناصر؟`)) return;
+    
+    try {
+      for (const id of selectedIds) {
+         await deleteDoc(doc(db, 'commodities', id));
+      }
+      await logAction('حذف سلع متعددة', `تم حذف ${selectedIds.length} سلع`);
+      setSelectedIds([]);
+    } catch(e) {
+      handleFirestoreError(e, OperationType.DELETE, `commodities_bulk`);
+    }
+  };
+
+  const toggleSelectAll = () => {
+    if (selectedIds.length === commodities.length) {
+      setSelectedIds([]);
+    } else {
+      setSelectedIds(commodities.map((c: any) => c.id));
+    }
+  };
+
+  const toggleSelect = (id: string) => {
+    if (selectedIds.includes(id)) {
+      setSelectedIds(selectedIds.filter(selId => selId !== id));
+    } else {
+      setSelectedIds([...selectedIds, id]);
+    }
+  };
+
   const [isAdding, setIsAdding] = useState(false);
   const [newCommodity, setNewCommodity] = useState({
-    symbol: '', nameAr: '', nameEn: '', category: 'energy', price: 0, unit: ''
+    symbol: '', nameAr: '', nameEn: '', category: 'energy', price: 0, unit: '', currency: 'USD'
   });
 
   const handleAddCommodity = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (!canAddDelete) return;
     try {
-      await addDoc(collection(db, 'commodities'), {
-        ...newCommodity,
-        change: 0,
-        changePercent: 0,
+      const searchSymbol = newCommodity.symbol.trim();
+      const searchNameAr = newCommodity.nameAr.trim();
+
+      const existing = commodities.find((c: any) => 
+        (c.symbol && normalizeForSearch(c.symbol) === normalizeForSearch(searchSymbol)) || 
+        (c.nameAr && normalizeForSearch(c.nameAr) === normalizeForSearch(searchNameAr))
+      );
+      
+      const oldPrice = existing?.price || newCommodity.price;
+      const price = Number(newCommodity.price);
+      const change = Number((price - oldPrice).toFixed(2));
+      const changePercent = oldPrice > 0 ? Number(((change / oldPrice) * 100).toFixed(2)) : 0;
+      
+      const commodityData = {
+        symbol: newCommodity.symbol.trim(),
+        nameAr: newCommodity.nameAr.trim(),
+        nameEn: newCommodity.nameEn.trim(),
+        category: newCommodity.category,
+        currency: newCommodity.currency,
+        unit: newCommodity.unit.trim(),
+        price,
+        prevClose: oldPrice,
+        change,
+        changeAmount: change,
+        changePercent,
+        high: Math.max(existing?.high || price, price),
+        low: Math.min(existing?.low || price, price),
+        trend: change >= 0 ? 'up' : 'down',
+        history: getUpdatedHistory(existing?.history || [], price),
         lastUpdated: serverTimestamp()
-      });
-      await logAction('إضافة سلعة', `تم إضافة سلعة جديدة: ${newCommodity.nameAr}`);
+      };
+
+      await consolidateDuplicates(searchSymbol, searchNameAr, commodityData);
+      
+      if (existing) {
+        await logAction('تحديث سلعة', `تم دمج وتحديث السلعة: ${newCommodity.nameAr}`);
+      } else {
+        await logAction('إضافة سلعة', `تم إضافة سلعة جديدة مشفرة: ${newCommodity.nameAr}`);
+      }
+      
       setIsAdding(false);
-      setNewCommodity({ symbol: '', nameAr: '', nameEn: '', category: 'energy', price: 0, unit: '' });
+      setNewCommodity({ symbol: '', nameAr: '', nameEn: '', category: 'energy', price: 0, unit: '', currency: 'USD' });
     } catch (error) {
       handleFirestoreError(error, OperationType.CREATE, 'commodities');
     }
@@ -724,27 +1041,99 @@ const MarketSection = ({ commodities, logAction, onDownload }: any) => {
 
   return (
     <div className="space-y-6">
-      <div className="flex justify-between items-center">
-        <h3 className="text-xl font-bold text-white">إدارة الأسعار والسلع</h3>
-        <div className="flex gap-4">
-          <button 
-            onClick={() => setIsAdding(!isAdding)}
-            className="flex items-center gap-2 px-4 py-2 bg-[#D4AF37] text-[#0A1128] rounded-lg hover:bg-[#B5952F] transition-all font-bold"
-          >
-            <Plus size={18} /> إضافة سلعة يدوياً
-          </button>
-          <button 
-            onClick={() => onDownload(commodities, 'market_data')}
-            className="flex items-center gap-2 px-4 py-2 bg-[#1C2E5A] text-white rounded-lg hover:bg-[#2A4075] transition-all border border-[#2A4075]"
-          >
-            <Download size={18} className="text-[#D4AF37]" /> تنزيل البيانات (CSV)
-          </button>
-          <label className="flex items-center gap-2 px-4 py-2 bg-[#1C2E5A] text-white rounded-lg hover:bg-[#2A4075] transition-all cursor-pointer border border-[#2A4075]">
-            <Upload size={18} className="text-[#D4AF37]" /> استيراد CSV
-            <input type="file" accept=".csv" onChange={handleImportCSV} className="hidden" />
-          </label>
+      <div className="flex justify-between items-center bg-[#121E3D] p-4 rounded-xl border border-[#1C2E5A] flex-wrap gap-4">
+        <div className="flex items-center gap-4">
+          <h3 className="text-xl font-bold text-white">إدارة الأسعار والسلع (العدد: {commodities.length})</h3>
+          {selectedIds.length > 0 && (
+            <span className="text-red-500 font-bold bg-red-500/10 px-3 py-1 rounded-full text-sm">
+              محدد: {selectedIds.length}
+            </span>
+          )}
+        </div>
+        <div className="flex gap-4 flex-wrap">
+          {(selectedIds.length > 0 && canAddDelete) && (
+            <button 
+              onClick={handleDeleteSelected}
+              className="flex items-center gap-2 px-4 py-2 bg-red-500/10 text-red-500 rounded-lg hover:bg-red-500 hover:text-white transition-all font-bold border border-red-500/20"
+            >
+              <Trash2 size={18} /> حذف المحدد
+            </button>
+          )}
+          {canAddDelete && (
+            <button 
+              onClick={() => setIsAdding(!isAdding)}
+              className="flex items-center gap-2 px-4 py-2 bg-[#D4AF37] text-[#0A1128] rounded-lg hover:bg-[#B5952F] transition-all font-bold"
+            >
+              <Plus size={18} /> إضافة سلعة يدوياً
+            </button>
+          )}
+          {canExport && (
+            <button 
+              onClick={() => onDownload(commodities, 'market_data')}
+              className="flex items-center gap-2 px-4 py-2 bg-[#1C2E5A] text-white rounded-lg hover:bg-[#2A4075] transition-all border border-[#2A4075]"
+            >
+              <Download size={18} className="text-[#D4AF37]" /> تنزيل البيانات
+            </button>
+          )}
+          {canImport && (
+            <button 
+              onClick={() => setShowImportModal(true)}
+              className="flex items-center gap-2 px-4 py-2 bg-[#1C2E5A] text-white rounded-lg hover:bg-[#2A4075] transition-all cursor-pointer border border-[#2A4075]"
+            >
+              <Upload size={18} className="text-[#D4AF37]" /> استيراد CSV
+            </button>
+          )}
         </div>
       </div>
+
+      {showImportModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm">
+          <div className="bg-[#121E3D] border border-[#1C2E5A] rounded-2xl p-6 shadow-xl max-w-md w-full relative">
+            <button 
+              onClick={() => setShowImportModal(false)}
+              className="absolute top-4 left-4 text-gray-400 hover:text-white"
+            >
+              <X size={20} />
+            </button>
+            <h4 className="text-white font-bold mb-4 text-lg border-b border-[#1C2E5A] pb-3">استيراد بيانات من CSV</h4>
+            <div className="space-y-4 mb-6">
+              <div>
+                <label className="block text-gray-400 text-sm mb-2">اختر قطاع السلع المراد إضافتها:</label>
+                <select 
+                  value={importSector} 
+                  onChange={e => setImportSector(e.target.value)} 
+                  className="w-full bg-[#0A1128] border border-[#1C2E5A] rounded-xl px-4 py-3 text-white focus:outline-none focus:border-[#D4AF37]"
+                >
+                  <option value="energy">الطاقة</option>
+                  <option value="metals">المعادن</option>
+                  <option value="agriculture">السلع الزراعية</option>
+                  <option value="currencies">العملات / المؤشرات</option>
+                </select>
+              </div>
+              <div>
+                <label className="block text-gray-400 text-sm mb-2">اختر عملة التسعير بالملف:</label>
+                <select 
+                  value={importCurrency} 
+                  onChange={e => setImportCurrency(e.target.value)} 
+                  className="w-full bg-[#0A1128] border border-[#1C2E5A] rounded-xl px-4 py-3 text-white focus:outline-none focus:border-[#D4AF37]"
+                >
+                  <option value="USD">دولار أمريكي (USD)</option>
+                  <option value="EUR">يورو (EUR)</option>
+                  <option value="LYD">دينار ليبي (LYD)</option>
+                </select>
+              </div>
+              <div className="bg-[#0A1128] border border-dashed border-[#1C2E5A] rounded-xl p-8 text-center relative hover:border-[#D4AF37] transition-colors group">
+                <Upload size={32} className="mx-auto text-gray-500 group-hover:text-[#D4AF37] mb-2 transition-colors" />
+                <div className="text-gray-400 text-sm">اضغط هنا لاختيار ملف CSV</div>
+                <input type="file" accept=".csv" onChange={handleImportCSV} className="absolute inset-0 opacity-0 cursor-pointer" />
+              </div>
+            </div>
+            <div className="bg-blue-500/10 border border-blue-500/20 rounded-lg p-3 text-xs text-blue-400">
+              ملاحظة: تأكد أن ترتيب الأعمدة في ملفك هو: (الرمز، الاسم عربي، الاسم إنجليزي، فئة، السعر، الوحدة)
+            </div>
+          </div>
+        </div>
+      )}
 
       {isAdding && (
         <div className="bg-[#121E3D] border border-[#1C2E5A] rounded-2xl p-6 shadow-xl mb-6">
@@ -759,8 +1148,15 @@ const MarketSection = ({ commodities, logAction, onDownload }: any) => {
               <option value="agriculture">زراعة</option>
               <option value="currencies">عملات</option>
             </select>
-            <input type="number" step="0.01" placeholder="السعر الافتتاحي" value={newCommodity.price || ''} onChange={e => setNewCommodity({...newCommodity, price: parseFloat(e.target.value)})} className="bg-[#0A1128] border border-[#1C2E5A] rounded-xl px-4 py-2 text-white" required />
-            <input type="text" placeholder="الوحدة (مثال: USD)" value={newCommodity.unit} onChange={e => setNewCommodity({...newCommodity, unit: e.target.value})} className="bg-[#0A1128] border border-[#1C2E5A] rounded-xl px-4 py-2 text-white" required />
+            <div className="flex gap-2">
+              <input type="number" step="0.01" placeholder="السعر" value={newCommodity.price || ''} onChange={e => setNewCommodity({...newCommodity, price: parseFloat(e.target.value)})} className="bg-[#0A1128] border border-[#1C2E5A] rounded-xl px-4 py-2 text-white w-2/3" required />
+              <select value={newCommodity.currency} onChange={e => setNewCommodity({...newCommodity, currency: e.target.value})} className="bg-[#0A1128] border border-[#1C2E5A] rounded-xl px-2 py-2 text-white w-1/3">
+                <option value="USD">دولار</option>
+                <option value="EUR">يورو</option>
+                <option value="LYD">دينار</option>
+              </select>
+            </div>
+            <input type="text" placeholder="الوحدة (مثل: برميل، أونصة)" value={newCommodity.unit} onChange={e => setNewCommodity({...newCommodity, unit: e.target.value})} className="bg-[#0A1128] border border-[#1C2E5A] rounded-xl px-4 py-2 text-white" />
             <div className="md:col-span-3 flex justify-end gap-2 mt-2">
               <button type="button" onClick={() => setIsAdding(false)} className="px-6 py-2 rounded-xl text-gray-400 hover:bg-gray-800 transition-colors">إلغاء</button>
               <button type="submit" className="px-6 py-2 bg-[#D4AF37] text-[#0A1128] font-bold rounded-xl hover:bg-[#B5952F] transition-colors">حفظ السلعة</button>
@@ -773,16 +1169,36 @@ const MarketSection = ({ commodities, logAction, onDownload }: any) => {
         <table className="w-full text-right">
           <thead className="bg-[#1C2E5A] text-gray-300 text-sm">
             <tr>
+              <th className="px-6 py-4 w-10">
+                <input 
+                  type="checkbox" 
+                  checked={selectedIds.length === commodities.length && commodities.length > 0} 
+                  onChange={toggleSelectAll}
+                  className="w-4 h-4 rounded border-[#1C2E5A] text-[#D4AF37] focus:ring-[#D4AF37] bg-[#0A1128]"
+                />
+              </th>
               <th className="px-6 py-4">الرمز</th>
               <th className="px-6 py-4">الاسم (عربي)</th>
-              <th className="px-6 py-4">السعر الحالي</th>
-              <th className="px-6 py-4">التغيير</th>
+              <th className="px-6 py-4">القطاع</th>
+              <th className="px-6 py-4">السعر</th>
+              <th className="px-6 py-4">الفارق العددي</th>
+              <th className="px-6 py-4">الفجوة (%)</th>
+              <th className="px-6 py-4">أعلى سعر</th>
+              <th className="px-6 py-4">أدنى سعر</th>
               <th className="px-6 py-4 text-center">الإجراءات</th>
             </tr>
           </thead>
           <tbody className="divide-y divide-[#1C2E5A]">
             {commodities.map((item: any) => (
               <tr key={item.id} className="hover:bg-[#1C2E5A]/30 transition-colors">
+                <td className="px-6 py-4">
+                  <input 
+                    type="checkbox" 
+                    checked={selectedIds.includes(item.id)} 
+                    onChange={() => toggleSelect(item.id)}
+                    className="w-4 h-4 rounded border-[#1C2E5A] text-[#D4AF37] focus:ring-[#D4AF37] bg-[#0A1128]"
+                  />
+                </td>
                 {editingId === item.id ? (
                   <>
                     <td className="px-6 py-4">
@@ -791,12 +1207,34 @@ const MarketSection = ({ commodities, logAction, onDownload }: any) => {
                     <td className="px-6 py-4">
                       <input type="text" value={formData.nameAr} onChange={e => setFormData({...formData, nameAr: e.target.value})} className="w-full bg-[#0A1128] border border-[#1C2E5A] rounded px-2 py-1 text-white" />
                     </td>
+                    <td className="px-6 py-4">
+                      <select value={formData.category} onChange={e => setFormData({...formData, category: e.target.value})} className="w-full bg-[#0A1128] border border-[#1C2E5A] rounded px-2 py-1 text-white">
+                        <option value="energy">طاقة</option>
+                        <option value="metals">معادن</option>
+                        <option value="agriculture">زراعة</option>
+                        <option value="currencies">عملات</option>
+                      </select>
+                    </td>
                     <td className="px-6 py-4 flex gap-2">
-                      <input type="number" value={formData.price} onChange={e => setFormData({...formData, price: parseFloat(e.target.value)})} className="w-20 bg-[#0A1128] border border-[#1C2E5A] rounded px-2 py-1 text-white" />
-                      <input type="text" value={formData.unit} onChange={e => setFormData({...formData, unit: e.target.value})} className="w-16 bg-[#0A1128] border border-[#1C2E5A] rounded px-2 py-1 text-white" />
+                      <input type="number" value={formData.price} onChange={e => setFormData({...formData, price: parseFloat(e.target.value)})} className="w-16 bg-[#0A1128] border border-[#1C2E5A] rounded px-2 py-1 text-white" />
+                      <select value={formData.currency || 'USD'} onChange={e => setFormData({...formData, currency: e.target.value})} className="w-16 bg-[#0A1128] border border-[#1C2E5A] rounded px-1 py-1 text-white text-xs">
+                        <option value="USD">دولار</option>
+                        <option value="EUR">يورو</option>
+                        <option value="LYD">دينار</option>
+                      </select>
+                      <input type="text" value={formData.unit} onChange={e => setFormData({...formData, unit: e.target.value})} className="w-16 bg-[#0A1128] border border-[#1C2E5A] rounded px-2 py-1 text-white" placeholder="الوحدة" />
                     </td>
                     <td className="px-6 py-4">
                       <input type="number" value={formData.change} onChange={e => setFormData({...formData, change: parseFloat(e.target.value)})} className="w-20 bg-[#0A1128] border border-[#1C2E5A] rounded px-2 py-1 text-white" />
+                    </td>
+                    <td className="px-6 py-4">
+                      <input type="number" value={formData.changePercent} onChange={e => setFormData({...formData, changePercent: parseFloat(e.target.value)})} className="w-20 bg-[#0A1128] border border-[#1C2E5A] rounded px-2 py-1 text-white" />
+                    </td>
+                    <td className="px-6 py-4">
+                      <input type="number" value={formData.high} onChange={e => setFormData({...formData, high: parseFloat(e.target.value)})} className="w-20 bg-[#0A1128] border border-[#1C2E5A] rounded px-2 py-1 text-white" />
+                    </td>
+                    <td className="px-6 py-4">
+                      <input type="number" value={formData.low} onChange={e => setFormData({...formData, low: parseFloat(e.target.value)})} className="w-20 bg-[#0A1128] border border-[#1C2E5A] rounded px-2 py-1 text-white" />
                     </td>
                     <td className="px-6 py-4 text-center">
                       <div className="flex items-center justify-center gap-2">
@@ -813,26 +1251,288 @@ const MarketSection = ({ commodities, logAction, onDownload }: any) => {
                   <>
                     <td className="px-6 py-4 text-white font-mono">{item.symbol}</td>
                     <td className="px-6 py-4 text-white">{item.nameAr}</td>
-                    <td className="px-6 py-4 text-white font-bold">{item.price} {item.unit}</td>
-                    <td className={`px-6 py-4 font-bold ${item.change >= 0 ? 'text-green-500' : 'text-red-500'}`}>
-                      {item.change >= 0 ? '+' : ''}{item.change} ({item.changePercent}%)
+                    <td className="px-6 py-4 text-gray-400 text-sm">
+                      {item.sectorDisplay}
                     </td>
+                    <td className="px-6 py-4 text-white font-bold">
+                      {item.price} {item.currency === 'LYD' ? 'دينار' : item.currency === 'EUR' ? 'يورو' : item.currency === 'USD' ? 'دولار' : (item.currency || 'دولار')} / {item.unit}
+                    </td>
+                    <td className={`px-6 py-4 font-bold font-mono ${item.change >= 0 ? 'text-green-500' : 'text-red-500'}`}>
+                      {item.change >= 0 ? '+' : ''}{item.change}
+                    </td>
+                    <td className="px-6 py-4">
+                      <span className={`px-2 py-1 rounded text-xs font-bold ${item.changePercent >= 0 ? 'bg-green-500/10 text-green-500' : 'bg-red-500/10 text-red-500'}`}>
+                        {item.changePercent >= 0 ? '↑' : '↓'} {Math.abs(item.changePercent)}%
+                      </span>
+                    </td>
+                    <td className="px-6 py-4 text-gray-300 font-mono text-sm">{item.high || item.price}</td>
+                    <td className="px-6 py-4 text-gray-300 font-mono text-sm">{item.low || item.price}</td>
                     <td className="px-6 py-4 text-center">
                       <div className="flex items-center justify-center gap-2">
-                        <button onClick={() => handleEdit(item)} className="p-2 text-blue-400 hover:bg-blue-400/10 rounded-lg">
-                          <Settings size={18} />
-                        </button>
-                        <button onClick={() => handleDelete(item.id)} className="p-2 text-red-500 hover:bg-red-500/10 rounded-lg">
-                          <Trash2 size={18} />
-                        </button>
+                        {canEdit && (
+                          <button onClick={() => handleEdit(item)} className="p-2 text-blue-400 hover:bg-blue-400/10 rounded-lg">
+                            <Settings size={18} />
+                          </button>
+                        )}
+                        {canAddDelete && (
+                          <button onClick={() => handleDelete(item.id)} className="p-2 text-red-500 hover:bg-red-500/10 rounded-lg">
+                            <Trash2 size={18} />
+                          </button>
+                        )}
                       </div>
                     </td>
                   </>
                 )}
               </tr>
             ))}
+            {commodities.length === 0 && (
+              <tr>
+                <td colSpan={10} className="p-16 text-center text-gray-500">
+                  <div className="flex flex-col items-center justify-center gap-2">
+                    <AlertCircle size={48} className="text-gray-600 mb-2 opacity-50" />
+                    <p className="text-lg">لا توجد سلع مضافة حالياً</p>
+                    <p className="text-sm opacity-70">قم بإضافة سلع يدوياً أو استيراد ملف CSV</p>
+                  </div>
+                </td>
+              </tr>
+            )}
           </tbody>
         </table>
+      </div>
+    </div>
+  );
+};
+
+const ReportsManagementSection = ({ reports, logAction, commodities, settings }: any) => {
+  const [loading, setLoading] = useState(false);
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [formData, setFormData] = useState<any>({
+    titleAr: '', titleEn: '', contentAr: '', contentEn: '', topic: 'global_market', status: 'draft'
+  });
+
+  const topics = [
+    { id: 'global_market', ar: 'نظرة عامة على السوق العالمي', en: 'Global Market Overview' },
+    { id: 'energy', ar: 'تحليل سوق الطاقة', en: 'Energy Market Analysis' },
+    { id: 'metals', ar: 'توقعات المعادن الثمينة', en: 'Precious Metals Forecast' },
+    { id: 'agriculture', ar: 'تقرير السلع الزراعية', en: 'Agricultural Commodities Report' },
+  ];
+
+  const handleGenerateAI = async (lang: 'ar' | 'en') => {
+    setLoading(true);
+    try {
+      const apiKey = settings?.geminiApiKey || (typeof process !== 'undefined' ? process.env.GEMINI_API_KEY : undefined);
+      
+      if (!apiKey) {
+        throw new Error('مفتاح API غير متوفر. يرجى إدخال مفتاحك في تبويب الإعدادات أولاً.');
+      }
+
+      const marketSummary = commodities.map((item: any) => 
+        `${item.nameEn} (${item.symbol}): Price ${item.price} ${item.currency}, Change ${item.change} (${item.changePercent}%), High: ${item.high || item.price}, Low: ${item.low || item.price}`
+      ).join('\n');
+
+      const selectedTopic = topics.find(t => t.id === formData.topic);
+      const topicName = lang === 'ar' ? selectedTopic?.ar : selectedTopic?.en;
+
+      const prompt = lang === 'ar'
+        ? `بصفتك خبيراً اقتصادياً، اكتب تقرير تحليلي مفصل ومحترف باللغة العربية حول "${topicName}" بناءً على بيانات السوق الحالية:\n\n${marketSummary}\n\nاستخدم Markdown.`
+        : `As an economic expert, write a detailed and professional analytical report in English about "${topicName}" based on the following current market data:\n\n${marketSummary}\n\nUse Markdown.`;
+
+      const text = await generateWithRetry(apiKey, prompt);
+      
+      if (lang === 'ar') {
+        setFormData((prev: any) => ({ ...prev, contentAr: text, titleAr: `تقرير: ${topicName}` }));
+      } else {
+        setFormData((prev: any) => ({ ...prev, contentEn: text, titleEn: `Report: ${topicName}` }));
+      }
+    } catch (e: any) {
+      console.error('AI Generation Error:', e);
+      alert(`فشل التوليد: ${e.message}\n\nنصيحة: تأكد من مفتاح API في الإعدادات.`);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleSave = async () => {
+    try {
+      if (editingId) {
+        await updateDoc(doc(db, 'reports', editingId), {
+          ...formData,
+          publishedAt: formData.status === 'published' ? serverTimestamp() : null
+        });
+        await logAction('تعديل تقرير', `تم تعديل تقرير: ${formData.titleAr}`);
+      } else {
+        await addDoc(collection(db, 'reports'), {
+          ...formData,
+          author: auth.currentUser?.email,
+          createdAt: serverTimestamp(),
+          publishedAt: formData.status === 'published' ? serverTimestamp() : null
+        });
+        await logAction('إنشاء تقرير', `تم إنشاء تقرير جديد: ${formData.titleAr}`);
+      }
+      setEditingId(null);
+      setFormData({ titleAr: '', titleEn: '', contentAr: '', contentEn: '', topic: 'global_market', status: 'draft' });
+    } catch (e) {
+      handleFirestoreError(e, OperationType.WRITE, 'reports');
+    }
+  };
+
+  const handleDelete = async (id: string) => {
+    if (!window.confirm('هل أنت متأكد من حذف هذا التقرير؟')) return;
+    try {
+      await deleteDoc(doc(db, 'reports', id));
+      await logAction('حذف تقرير', `تم حذف تقرير: ${id}`);
+    } catch (e) {
+      handleFirestoreError(e, OperationType.DELETE, `reports/${id}`);
+    }
+  };
+
+  const handleEdit = (report: any) => {
+    setEditingId(report.id);
+    setFormData(report);
+  };
+
+  return (
+    <div className="space-y-8">
+      <div className="bg-[#121E3D] border border-[#1C2E5A] rounded-2xl p-8 shadow-2xl">
+        <h3 className="text-xl font-bold text-white mb-8 flex items-center gap-3">
+          <FileText className="text-[#D4AF37]" size={24} /> {editingId ? 'تعديل التقرير' : 'إنشاء تقرير جديد'}
+        </h3>
+        
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-6">
+          <div className="space-y-2">
+            <label className="text-sm text-gray-400">اسم التقرير (عربي)</label>
+            <input 
+              type="text" 
+              value={formData.titleAr} 
+              onChange={e => setFormData({...formData, titleAr: e.target.value})} 
+              className="w-full bg-[#0A1128] border border-[#1C2E5A] rounded-xl px-4 py-3 text-white focus:border-[#D4AF37] outline-none"
+            />
+          </div>
+          <div className="space-y-2">
+            <label className="text-sm text-gray-400">اسم التقرير (إنجليزي)</label>
+            <input 
+              type="text" 
+              value={formData.titleEn} 
+              onChange={e => setFormData({...formData, titleEn: e.target.value})} 
+              className="w-full bg-[#0A1128] border border-[#1C2E5A] rounded-xl px-4 py-3 text-white focus:border-[#D4AF37] outline-none"
+            />
+          </div>
+          <div className="space-y-2">
+            <label className="text-sm text-gray-400">القسم / الموضوع</label>
+            <select 
+              value={formData.topic} 
+              onChange={e => setFormData({...formData, topic: e.target.value})} 
+              className="w-full bg-[#0A1128] border border-[#1C2E5A] rounded-xl px-4 py-3 text-white focus:border-[#D4AF37] outline-none"
+            >
+              {topics.map(t => <option key={t.id} value={t.id}>{t.ar}</option>)}
+            </select>
+          </div>
+          <div className="space-y-2">
+            <label className="text-sm text-gray-400">الحالة</label>
+            <select 
+              value={formData.status} 
+              onChange={e => setFormData({...formData, status: e.target.value})} 
+              className="w-full bg-[#0A1128] border border-[#1C2E5A] rounded-xl px-4 py-3 text-white focus:border-[#D4AF37] outline-none"
+            >
+              <option value="draft">مسودة (حفظ فقط)</option>
+              <option value="published">نشر (سيظهر للمستخدمين)</option>
+            </select>
+          </div>
+        </div>
+
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-8 mb-8">
+          <div className="space-y-4">
+            <div className="flex items-center justify-between">
+              <label className="text-sm text-gray-400">محتوى التقرير (عربي - Markdown)</label>
+              <button 
+                onClick={() => handleGenerateAI('ar')}
+                disabled={loading}
+                className="text-[10px] bg-purple-500/10 text-purple-400 border border-purple-500/20 px-2 py-1 rounded flex items-center gap-1 hover:bg-purple-500 hover:text-white transition-all disabled:opacity-50"
+              >
+                <Zap size={12} /> {loading ? 'جاري التوليد...' : 'توليد بالذكاء الاصطناعي'}
+              </button>
+            </div>
+            <textarea 
+              rows={10} 
+              value={formData.contentAr} 
+              onChange={e => setFormData({...formData, contentAr: e.target.value})} 
+              className="w-full bg-[#0A1128] border border-[#1C2E5A] rounded-xl px-4 py-4 text-white focus:border-[#D4AF37] outline-none font-mono text-sm leading-relaxed"
+            />
+          </div>
+          <div className="space-y-4">
+            <div className="flex items-center justify-between">
+              <label className="text-sm text-gray-400">محتوى التقرير (إنجليزي - Markdown)</label>
+              <button 
+                onClick={() => handleGenerateAI('en')}
+                disabled={loading}
+                className="text-[10px] bg-purple-500/10 text-purple-400 border border-purple-500/20 px-2 py-1 rounded flex items-center gap-1 hover:bg-purple-500 hover:text-white transition-all disabled:opacity-50"
+              >
+                <Zap size={12} /> {loading ? 'جاري التوليد...' : 'توليد بالذكاء الاصطناعي'}
+              </button>
+            </div>
+            <textarea 
+              rows={10} 
+              value={formData.contentEn} 
+              onChange={e => setFormData({...formData, contentEn: e.target.value})} 
+              className="w-full bg-[#0A1128] border border-[#1C2E5A] rounded-xl px-4 py-4 text-white focus:border-[#D4AF37] outline-none font-mono text-sm leading-relaxed"
+            />
+          </div>
+        </div>
+
+        <button 
+          onClick={handleSave}
+          className="w-full bg-[#D4AF37] text-[#0A1128] font-black py-4 rounded-xl flex items-center justify-center gap-2 hover:bg-[#B5952F] transition-all"
+        >
+          <Save size={20} /> {editingId ? 'تحديث التقرير' : 'حفظ التقرير الجديد'}
+        </button>
+      </div>
+
+      <div className="bg-[#121E3D] border border-[#1C2E5A] rounded-2xl overflow-hidden shadow-2xl">
+        <h4 className="p-6 text-white font-bold border-b border-[#1C2E5A]">التقارير السابقة</h4>
+        <div className="overflow-x-auto">
+          <table className="w-full text-right">
+            <thead className="bg-[#1C2E5A] text-gray-300 text-sm">
+              <tr>
+                <th className="px-6 py-4">اسم التقرير</th>
+                <th className="px-6 py-4">القسم</th>
+                <th className="px-6 py-4">الحالة</th>
+                <th className="px-6 py-4">تاريخ النشر</th>
+                <th className="px-6 py-4 text-center">الإجراءات</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-[#1C2E5A]">
+              {reports.map((report: Report) => (
+                <tr key={report.id} className="hover:bg-[#1C2E5A]/30 transition-colors group">
+                  <td className="px-6 py-4">
+                    <div className="text-white font-bold">{report.titleAr}</div>
+                    <div className="text-gray-500 text-xs">{report.titleEn}</div>
+                  </td>
+                  <td className="px-6 py-4 text-gray-400 text-sm">
+                    {topics.find(t => t.id === report.topic)?.ar}
+                  </td>
+                  <td className="px-6 py-4">
+                    <span className={`px-3 py-1 rounded-full text-xs font-bold ${report.status === 'published' ? 'bg-green-500/10 text-green-500' : 'bg-yellow-500/10 text-yellow-500'}`}>
+                      {report.status === 'published' ? 'منشور' : 'مسودة'}
+                    </span>
+                  </td>
+                  <td className="px-6 py-4 text-gray-500 text-xs">
+                    {report.publishedAt ? safeFormatDate(report.publishedAt) : '-'}
+                  </td>
+                  <td className="px-6 py-4 text-center">
+                    <div className="flex items-center justify-center gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
+                      <button onClick={() => handleEdit(report)} className="p-2 text-blue-400 hover:bg-blue-400/10 rounded-lg">
+                        <Settings size={18} />
+                      </button>
+                      <button onClick={() => handleDelete(report.id)} className="p-2 text-red-500 hover:bg-red-500/10 rounded-lg">
+                        <Trash2 size={18} />
+                      </button>
+                    </div>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
       </div>
     </div>
   );
@@ -1067,7 +1767,24 @@ const SettingsSection = ({ settings, logAction }: any) => {
               <Shield size={22} /> الأمان والروابط
             </h4>
             <div className="space-y-4">
-              <div className="space-y-2">
+              <div className="flex items-center justify-between p-4 bg-[#1C2E5A]/30 border border-[#1C2E5A] rounded-xl hover:border-[#D4AF37]/50 transition-all">
+                <div>
+                  <h5 className="text-white font-bold mb-1">حالة المنصة (تشغيل / إيقاف)</h5>
+                  <p className="text-xs text-gray-400">عند الإيقاف سيتم عرض صفحة "تحت الصيانة" للزوار</p>
+                </div>
+                <button 
+                  type="button"
+                  onClick={() => {
+                    const currentState = formData.isSiteActive !== false; // defaults to true if undefined
+                    setFormData({...formData, isSiteActive: !currentState});
+                  }}
+                  className={`text-3xl transition-colors ${formData.isSiteActive !== false ? 'text-[#D4AF37]' : 'text-gray-500'}`}
+                >
+                  {formData.isSiteActive !== false ? <ToggleRight size={36} /> : <ToggleLeft size={36} />}
+                </button>
+              </div>
+
+              <div className="space-y-2 pt-2">
                 <label className="text-sm text-gray-400 font-medium">رابط لوحة التحكم السري</label>
                 <input 
                   type="text" 
@@ -1086,6 +1803,24 @@ const SettingsSection = ({ settings, logAction }: any) => {
                   onChange={e => setFormData({...formData, logoUrl: e.target.value})}
                   className="w-full bg-[#0A1128] border border-[#1C2E5A] rounded-xl px-4 py-4 text-white outline-none focus:border-[#D4AF37] transition-all"
                 />
+              </div>
+
+              <div className="space-y-2 pt-4">
+                <label className="text-sm text-gray-400 font-medium">Gemini AI API Key (مفتاح الذكاء الاصطناعي)</label>
+                <div className="relative group/key">
+                  <input 
+                    type="password" 
+                    value={formData.geminiApiKey || ''} 
+                    onChange={e => setFormData({...formData, geminiApiKey: e.target.value})}
+                    placeholder="أدخل مفتاح خاص بك هنا..."
+                    className="w-full bg-[#0A1128] border border-[#1C2E5A] rounded-xl px-4 py-4 text-white outline-none focus:border-[#D4AF37] transition-all group-hover/key:border-[#D4AF37]/50"
+                  />
+                  <Zap className="absolute left-4 top-1/2 -translate-y-1/2 text-gray-500 group-hover/key:text-[#D4AF37] transition-colors" size={18} />
+                </div>
+                <p className="text-[10px] text-gray-400 flex items-center gap-1 mt-1">
+                  <span>يمكنك الحصول على مفتاح مجاني من: </span>
+                  <a href="https://aistudio.google.com/app/apikey" target="_blank" rel="noopener noreferrer" className="text-[#D4AF37] hover:underline">Google AI Studio</a>
+                </p>
               </div>
             </div>
 
@@ -1168,17 +1903,21 @@ const SettingsSection = ({ settings, logAction }: any) => {
   );
 };
 
-const LogsSection = ({ logs, onDownload }: any) => {
+const LogsSection = ({ logs, onDownload, isSuperAdmin, adminPermissions }: any) => {
+  const canExport = isSuperAdmin || adminPermissions?.includes('export_data');
+
   return (
     <div className="space-y-6">
       <div className="flex justify-between items-center">
         <h3 className="text-xl font-bold text-white">سجل العمليات الأخير</h3>
-        <button 
-          onClick={() => onDownload(logs, 'activity_logs')}
-          className="flex items-center gap-2 px-4 py-2 bg-[#1C2E5A] text-white rounded-lg hover:bg-[#2A4075] transition-all border border-[#2A4075]"
-        >
-          <Download size={18} className="text-[#D4AF37]" /> تنزيل السجل (CSV)
-        </button>
+        {canExport && (
+          <button 
+            onClick={() => onDownload(logs, 'activity_logs')}
+            className="flex items-center gap-2 px-4 py-2 bg-[#1C2E5A] text-white rounded-lg hover:bg-[#2A4075] transition-all border border-[#2A4075]"
+          >
+            <Download size={18} className="text-[#D4AF37]" /> تنزيل السجل (CSV)
+          </button>
+        )}
       </div>
       <div className="bg-[#121E3D] border border-[#1C2E5A] rounded-2xl overflow-hidden shadow-2xl">
         <table className="w-full text-right">
@@ -1201,7 +1940,7 @@ const LogsSection = ({ logs, onDownload }: any) => {
                 </td>
                 <td className="px-6 py-4 text-gray-400 text-sm">{log.details}</td>
                 <td className="px-6 py-4 text-gray-500 text-xs">
-                  {log.timestamp?.toDate().toLocaleString()}
+                  {safeFormatDate(log.timestamp)}
                 </td>
               </tr>
             ))}
@@ -1212,7 +1951,9 @@ const LogsSection = ({ logs, onDownload }: any) => {
   );
 };
 
-const MessagesSection = ({ messages, logAction, onDownload }: any) => {
+const MessagesSection = ({ messages, logAction, onDownload, isSuperAdmin, adminPermissions }: any) => {
+  const canExport = isSuperAdmin || adminPermissions?.includes('export_data');
+
   const handleDelete = async (id: string) => {
     if (!window.confirm('هل أنت متأكد من حذف هذه الرسالة؟')) return;
     try {
@@ -1235,12 +1976,14 @@ const MessagesSection = ({ messages, logAction, onDownload }: any) => {
     <div className="space-y-6">
       <div className="flex justify-between items-center">
         <h3 className="text-xl font-bold text-white">صندوق الوارد (الرسائل والطلبات)</h3>
-        <button 
-          onClick={() => onDownload(messages, 'user_messages')}
-          className="flex items-center gap-2 px-4 py-2 bg-[#1C2E5A] text-white rounded-lg hover:bg-[#2A4075] transition-all border border-[#2A4075]"
-        >
-          <Download size={18} className="text-[#D4AF37]" /> تنزيل الرسائل (CSV)
-        </button>
+        {canExport && (
+          <button 
+            onClick={() => onDownload(messages, 'user_messages')}
+            className="flex items-center gap-2 px-4 py-2 bg-[#1C2E5A] text-white rounded-lg hover:bg-[#2A4075] transition-all border border-[#2A4075]"
+          >
+            <Download size={18} className="text-[#D4AF37]" /> تنزيل الرسائل (CSV)
+          </button>
+        )}
       </div>
 
       <div className="grid grid-cols-1 gap-4">
@@ -1267,7 +2010,7 @@ const MessagesSection = ({ messages, logAction, onDownload }: any) => {
                 </div>
                 <div className="flex items-center gap-2">
                   <span className="text-gray-500 text-xs">
-                    {msg.createdAt?.toDate().toLocaleString()}
+                    {safeFormatDate(msg.createdAt)}
                   </span>
                   <button 
                     onClick={() => handleDelete(msg.id)}
@@ -1302,10 +2045,16 @@ const AdminsSection = ({ adminsList, logAction, currentUserEmail }: any) => {
   const [selectedPermissions, setSelectedPermissions] = useState<string[]>([]);
 
   const availablePermissions = [
-    { id: 'manage_commodities', label: 'إدارة الأسعار والسوق' },
-    { id: 'manage_news', label: 'إدارة الأخبار' },
-    { id: 'manage_settings', label: 'إعدادات الموقع والمحتوى' },
-    { id: 'manage_messages', label: 'إدارة الرسائل' }
+    { id: 'view_dashboard', label: 'الوصول للوحة التحكم (الرئيسية)' },
+    { id: 'manage_commodities', label: 'إدارة وتحديث أسعار السلع' },
+    { id: 'add_delete_commodities', label: 'إضافة وحذف السلع' },
+    { id: 'import_csv', label: 'استيراد البيانات (CSV/Excel)' },
+    { id: 'export_data', label: 'تصدير البيانات والتقارير' },
+    { id: 'manage_news', label: 'إدارة شريط الأخبار' },
+    { id: 'manage_content', label: 'إدارة المحتوى والصفحات' },
+    { id: 'manage_settings', label: 'إعدادات المنصة المتقدمة' },
+    { id: 'manage_messages', label: 'الاطلاع وإدارة الرسائل' },
+    { id: 'view_logs', label: 'الاطلاع على سجلات النظام' }
   ];
 
   const togglePermission = (permId: string) => {
@@ -1421,7 +2170,7 @@ const AdminsSection = ({ adminsList, logAction, currentUserEmail }: any) => {
                 <div>
                   <div className="text-white font-bold">{admin.email}</div>
                   <div className="text-gray-500 text-xs">
-                    تمت الإضافة بواسطة: {admin.addedBy} | {admin.createdAt?.toDate().toLocaleDateString()}
+                    تمت الإضافة بواسطة: {admin.addedBy} | {safeFormatDate(admin.createdAt, 'date')}
                   </div>
                 </div>
                 <button

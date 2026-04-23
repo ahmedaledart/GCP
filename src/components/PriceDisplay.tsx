@@ -1,32 +1,33 @@
 import React, { useEffect, useState, useRef } from 'react';
 
 interface PriceDisplayProps {
-  price: number;
+  price: number | undefined | null;
   className?: string;
 }
 
 export const PriceDisplay: React.FC<PriceDisplayProps> = ({ price, className = '' }) => {
   const [flashClass, setFlashClass] = useState('');
-  const prevPrice = useRef(price);
+  const safePrice = typeof price === 'number' && !isNaN(price) ? price : 0;
+  const prevPrice = useRef(safePrice);
 
   useEffect(() => {
-    if (price > prevPrice.current) {
+    if (safePrice > prevPrice.current) {
       setFlashClass('flash-up');
-    } else if (price < prevPrice.current) {
+    } else if (safePrice < prevPrice.current) {
       setFlashClass('flash-down');
     }
-    prevPrice.current = price;
+    prevPrice.current = safePrice;
 
     const timer = setTimeout(() => {
       setFlashClass('');
     }, 1000);
 
     return () => clearTimeout(timer);
-  }, [price]);
+  }, [safePrice]);
 
   return (
     <span className={`transition-colors duration-300 rounded px-1 ${flashClass} ${className}`}>
-      {price.toFixed(2)}
+      {safePrice.toFixed(2)}
     </span>
   );
 };

@@ -3,6 +3,7 @@ import { marketNews as mockMarketNews } from '../data/mockData';
 import { Newspaper, ChevronLeft, ChevronRight, AlertTriangle, Loader2, ExternalLink } from 'lucide-react';
 import { useLanguage } from '../context/LanguageContext';
 import { GoogleGenAI } from '@google/genai';
+import { generateWithRetry } from '../services/geminiService';
 
 interface FetchedNews {
   id: string;
@@ -17,85 +18,53 @@ interface FetchedNews {
 export const NewsSection = () => {
   const { t, language } = useLanguage();
   const [news, setNews] = useState<FetchedNews[]>([]);
+  const [marketInsight, setMarketInsight] = useState<string>('');
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(false);
 
   useEffect(() => {
-    fetchRealNews();
+    fetchRealNewsAndInsights();
     
-    // Update every hour (3600000 ms)
     const interval = setInterval(() => {
-      fetchRealNews();
+      fetchRealNewsAndInsights();
     }, 3600000);
 
     return () => clearInterval(interval);
-  }, [language]); // Re-fetch when language changes
+  }, [language]);
 
-  const fetchRealNews = async () => {
+  const fetchRealNewsAndInsights = async () => {
     setLoading(true);
     setError(false);
     try {
-      const apiKey = process.env.GEMINI_API_KEY;
+      const apiKey = (typeof process !== 'undefined' ? process.env.GEMINI_API_KEY : undefined);
       if (!apiKey) throw new Error('API Key missing');
 
-      const ai = new GoogleGenAI({ apiKey });
+      const newsPrompt = language === 'ar'
+        ? `ابحث عن أحدث 4 أخبار اقتصادية ومالية عالمية من مواقع موثوقة.
+قم بإرجاع النتيجة كمصفوفة JSON فقط تحتوي على كائنات تخص: id, title, summary, source, time, url, isAlert.`
+        : `Search for the latest 4 global economic and financial news headlines from reliable sources.
+Return the result ONLY as a JSON array of objects with: id, title, summary, source, time, url, isAlert.`;
+
+      const insightPrompt = language === 'ar'
+        ? `بناءً على الوضع الاقتصادي العالمي الحالي وتحركات أسعار السلع (النفط، الذهب، الغاز)، اكتب فقرة واحدة (insight) تشرح باختصار السبب وراء التحركات الحالية في السوق. ابدأ بعبارة "بوصلة السوق:".`
+        : `Based on current global economic conditions and commodity price movements (Oil, Gold, Gas), write a single paragraph (insight) briefly explaining the reason behind current market moves. Start with "Market Compass:".`;
+
+      // Parallelize both requests with retry logic
+      const [newsTextRaw, insightText] = await Promise.all([
+        generateWithRetry(apiKey, newsPrompt, { search: true }),
+        generateWithRetry(apiKey, insightPrompt, { search: true })
+      ]);
+
+      let newsText = newsTextRaw;
+      newsText = newsText.replace(/```json/g, '').replace(/```/g, '').trim();
+      const parsedNews: FetchedNews[] = JSON.parse(newsText);
       
-      const prompt = language === 'ar'
-        ? `ابحث عن أحدث 4 أخبار اقتصادية ومالية عالمية من مواقع موثوقة (مثل بلومبرغ، رويترز، سي إن بي سي).
-قم بإرجاع النتيجة كمصفوفة JSON فقط تحتوي على كائنات بالخصائص التالية:
-- "id": معرف فريد
-- "title": عنوان الخبر
-- "summary": ملخص قصير للخبر
-- "source": مصدر الخبر
-- "time": وقت النشر (مثل "منذ ساعتين")
-- "url": رابط الخبر
-- "isAlert": قيمة منطقية (true/false) إذا كان الخبر عاجلاً أو هاماً جداً
-
-لا تقم بإرجاع أي نص آخر سوى مصفوفة JSON.`
-        : `Search for the latest 4 global economic and financial news headlines from reliable sources (e.g., Bloomberg, Reuters, CNBC).
-Return the result ONLY as a JSON array of objects with the following properties:
-- "id": a unique string
-- "title": the news headline
-- "summary": a short summary
-- "source": the news source
-- "time": when it was published (e.g., "2 hours ago")
-- "url": the link to the news article
-- "isAlert": boolean (true/false) if it's breaking/very important news
-
-Do not return any other text except the JSON array.`;
-
-      const response = await ai.models.generateContent({
-        model: 'gemini-3-flash-preview',
-        contents: prompt,
-        config: {
-          tools: [{ googleSearch: {} }],
-        }
-      });
-
-      let text = response.text || '';
-      // Clean up markdown formatting if present
-      text = text.replace(/```json/g, '').replace(/```/g, '').trim();
-      
-      const parsedNews: FetchedNews[] = JSON.parse(text);
-      
-      // Extract grounding URLs if available to enrich the data
-      const chunks = response.candidates?.[0]?.groundingMetadata?.groundingChunks;
-      if (chunks && chunks.length > 0) {
-        parsedNews.forEach((item, index) => {
-          if (chunks[index]?.web?.uri && (!item.url || item.url === '#')) {
-            item.url = chunks[index].web.uri;
-          }
-        });
-      }
-
       setNews(parsedNews.slice(0, 4));
+      setMarketInsight(insightText);
     } catch (err: any) {
-      const isQuotaError = err?.message?.includes('429') || err?.status === 'RESOURCE_EXHAUSTED';
-      if (!isQuotaError) {
-        console.error('Failed to fetch real news:', err);
-      }
+      console.error('Failed to fetch real news:', err);
       setError(true);
-      // Fallback to mock data mapped to FetchedNews format
+      setMarketInsight(language === 'ar' ? 'بوصلة السوق: تشهد الأسواق تقلبات نتيجة التوترات الجيوسياسية الحالية وتغيرات مستويات الطلب العالمي.' : 'Market Compass: Markets are experiencing volatility due to current geopolitical tensions and shifts in global demand levels.');
       setNews(mockMarketNews.map(mock => ({
         id: mock.id.toString(),
         title: language === 'ar' ? mock.titleAr : mock.titleEn,
@@ -113,7 +82,7 @@ Do not return any other text except the JSON array.`;
   return (
     <section className="py-16 bg-[#0A1128]">
       <div className="container mx-auto px-4">
-        <div className="flex items-center justify-between mb-10">
+        <div className="flex items-center justify-between mb-6">
           <h2 className="text-2xl font-bold text-white flex items-center gap-3">
             <Newspaper className="text-[#D4AF37]" />
             {t('news')}
@@ -123,6 +92,15 @@ Do not return any other text except the JSON array.`;
             {language === 'ar' ? <ChevronLeft size={16} /> : <ChevronRight size={16} />}
           </a>
         </div>
+
+        {/* AI Insight Bar */}
+        {marketInsight && (
+          <div className="mb-10 bg-gradient-to-r from-[#D4AF37]/10 to-transparent border-l-4 border-[#D4AF37] p-4 rounded-r-lg">
+            <p className="text-[#D4AF37] text-sm md:text-base font-medium italic">
+              {marketInsight}
+            </p>
+          </div>
+        )}
 
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
           {loading ? (

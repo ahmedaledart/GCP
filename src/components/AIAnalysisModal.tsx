@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { X, Sparkles, Loader2, FileText, FileSpreadsheet } from 'lucide-react';
 import { useLanguage } from '../context/LanguageContext';
 import { useMarketData } from '../context/MarketContext';
-import { GoogleGenAI } from '@google/genai';
+import { generateWithRetry } from '../services/geminiService';
 import ReactMarkdown from 'react-markdown';
 import jsPDF from 'jspdf';
 import * as XLSX from 'xlsx';
@@ -34,8 +34,6 @@ export const AIAnalysisModal: React.FC<AIAnalysisModalProps> = ({ isOpen, onClos
         throw new Error('API Key is missing');
       }
 
-      const ai = new GoogleGenAI({ apiKey });
-      
       const marketSummary = data.map(item => 
         `${item.nameEn} (${item.symbol}): Price ${item.price}, Change ${item.changePercent}%`
       ).join('\n');
@@ -44,17 +42,11 @@ export const AIAnalysisModal: React.FC<AIAnalysisModalProps> = ({ isOpen, onClos
         ? `بصفتك خبيرًا اقتصاديًا ومحللًا ماليًا، قم بالبحث عن أحدث الأخبار الاقتصادية ثم قدم قراءة تحليلية موجزة للأسواق العالمية بناءً على البيانات التالية:\n\n${marketSummary}\n\nركز على أهم التحركات، الاتجاهات العامة، والتوقعات المستقبلية القصيرة المدى. استخدم تنسيق Markdown.`
         : `As an economic expert and financial analyst, search for the latest economic news and provide a concise analytical reading of the global markets based on the following data:\n\n${marketSummary}\n\nFocus on major movements, general trends, and short-term future expectations. Use Markdown format.`;
 
-      const response = await ai.models.generateContent({
-        model: 'gemini-3.1-pro-preview',
-        contents: prompt,
-        config: {
-          tools: [{ googleSearch: {} }],
-        }
-      });
+      const responseText = await generateWithRetry(apiKey, prompt, { model: 'gemini-3.1-pro-preview', search: true });
 
-      setAnalysis(response.text || '');
+      setAnalysis(responseText || '');
     } catch (err: any) {
-      const isQuotaError = err?.message?.includes('429') || err?.status === 'RESOURCE_EXHAUSTED';
+      const isQuotaError = err?.message?.includes('429') || err?.status === 'RESOURCE_EXHAUSTED' || err?.message?.includes('404');
       
       console.error('Error generating analysis:', err);
       

@@ -16,10 +16,15 @@ export const LiveTicker = () => {
         {tickerItems.map((item, index) => (
           <div key={`${item.id}-${index}`} className="flex items-center gap-3 px-6 border-l border-[#1C2E5A] last:border-none">
             <span className="text-sm font-medium text-gray-200">{language === 'ar' ? item.nameAr : item.nameEn}</span>
-            <PriceDisplay price={item.price} className="text-sm font-bold text-white" />
+            <div className="flex items-center gap-1" dir="ltr">
+              <span className="text-xs text-gray-500 font-sans font-normal">
+                {item.currency === 'LYD' ? 'د.ل' : item.currency === 'EUR' ? '€' : item.currency === 'USD' ? '$' : (item.currency || '$')}
+              </span>
+              <PriceDisplay price={item.price} className="text-sm font-bold text-white" />
+            </div>
             <div className={`flex items-center text-xs font-bold ${item.trend === 'up' ? 'text-[#10B981]' : 'text-[#EF4444]'}`} dir="ltr">
               {item.trend === 'up' ? <ArrowUpRight size={14} /> : <ArrowDownRight size={14} />}
-              <span>{Math.abs(item.changePercent).toFixed(2)}%</span>
+              <span>{Math.abs(item.changePercent || 0).toFixed(2)}%</span>
             </div>
           </div>
         ))}

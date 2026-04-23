@@ -19,6 +19,7 @@ export interface Commodity {
   low: number;
   unitAr: string;
   unitEn: string;
+  currency?: string;
   trend: Trend;
   statusAr: MarketStatus;
   statusEn: MarketStatusEn;

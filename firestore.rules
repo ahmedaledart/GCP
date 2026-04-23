@@ -125,6 +125,14 @@ service cloud.firestore {
       allow delete: if isAuthenticated() && resource.data.userId == request.auth.uid;
     }
 
+    // Reports
+    match /reports/{reportId} {
+      allow read: if (resource != null && resource.data.status == 'published') || isAdmin();
+      allow create: if hasPermission('manage_content');
+      allow update: if hasPermission('manage_content');
+      allow delete: if hasPermission('manage_content');
+    }
+
     // Default deny
     match /{document=**} {
       allow read, write: if false;

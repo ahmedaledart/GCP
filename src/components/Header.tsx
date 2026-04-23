@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { Search, Bell, Menu, User, Globe, LogOut, X, CheckCircle, AlertTriangle, Info } from 'lucide-react';
 import { NavLink, Link } from 'react-router-dom';
+import { motion, AnimatePresence } from 'motion/react';
 import { useLanguage } from '../context/LanguageContext';
 import { useSettings } from '../context/SettingsContext';
 import { auth, db, googleProvider, signInWithPopup, signOut, onAuthStateChanged } from '../firebase';
@@ -207,7 +208,17 @@ export const Header = () => {
                                   {language === 'ar' ? notif.messageAr : notif.messageEn}
                                 </p>
                                 <span className="text-[10px] text-gray-500 mt-2 block">
-                                  {notif.createdAt?.toDate ? notif.createdAt.toDate().toLocaleString(language === 'ar' ? 'ar-EG' : 'en-US') : ''}
+                                  {(() => {
+                                    try {
+                                      if (notif.createdAt?.toDate) {
+                                        const d = notif.createdAt.toDate();
+                                        return isNaN(d.getTime()) ? '' : d.toLocaleString(language === 'ar' ? 'ar-EG' : 'en-US');
+                                      }
+                                      return '';
+                                    } catch {
+                                      return '';
+                                    }
+                                  })()}
                                 </span>
                               </div>
                               {!notif.read && (
@@ -259,39 +270,47 @@ export const Header = () => {
       </div>
 
       {/* Mobile Menu */}
-      {isMobileMenuOpen && (
-        <div className="lg:hidden bg-[#0A1128] border-b border-[#1C2E5A] absolute top-20 left-0 w-full shadow-2xl">
-          <nav className="flex flex-col p-4 gap-2">
-            <NavLink to="/" onClick={() => setIsMobileMenuOpen(false)} className={mobileNavLinkClass}>{t('home')}</NavLink>
-            <NavLink to="/markets" onClick={() => setIsMobileMenuOpen(false)} className={mobileNavLinkClass}>{t('markets')}</NavLink>
-            <NavLink to="/analytics" onClick={() => setIsMobileMenuOpen(false)} className={mobileNavLinkClass}>{t('analytics')}</NavLink>
-            <NavLink to="/news" onClick={() => setIsMobileMenuOpen(false)} className={mobileNavLinkClass}>{t('news')}</NavLink>
-            <NavLink to="/reports" onClick={() => setIsMobileMenuOpen(false)} className={mobileNavLinkClass}>{t('reports')}</NavLink>
-            <NavLink to="/faq" onClick={() => setIsMobileMenuOpen(false)} className={mobileNavLinkClass}>{t('faq')}</NavLink>
-            
-            <div className="mt-4 pt-4 border-t border-[#1C2E5A] flex flex-col gap-4">
-              <div className="flex items-center bg-[#121E3D] rounded-full px-4 py-2 border border-[#1C2E5A]">
-                <Search size={18} className="text-gray-400 mx-2" />
-                <input 
-                  type="text" 
-                  placeholder={t('searchPlaceholder')}
-                  className="bg-transparent border-none outline-none text-sm text-white w-full placeholder-gray-500"
-                />
+      <AnimatePresence>
+        {isMobileMenuOpen && (
+          <motion.div 
+            initial={{ opacity: 0, y: -20, height: 0 }}
+            animate={{ opacity: 1, y: 0, height: 'auto' }}
+            exit={{ opacity: 0, y: -20, height: 0 }}
+            transition={{ duration: 0.2 }}
+            className="lg:hidden bg-[#0A1128] border-b border-[#1C2E5A] absolute top-20 left-0 w-full shadow-2xl overflow-hidden"
+          >
+            <nav className="flex flex-col p-4 gap-2">
+              <NavLink to="/" onClick={() => setIsMobileMenuOpen(false)} className={mobileNavLinkClass}>{t('home')}</NavLink>
+              <NavLink to="/markets" onClick={() => setIsMobileMenuOpen(false)} className={mobileNavLinkClass}>{t('markets')}</NavLink>
+              <NavLink to="/analytics" onClick={() => setIsMobileMenuOpen(false)} className={mobileNavLinkClass}>{t('analytics')}</NavLink>
+              <NavLink to="/news" onClick={() => setIsMobileMenuOpen(false)} className={mobileNavLinkClass}>{t('news')}</NavLink>
+              <NavLink to="/reports" onClick={() => setIsMobileMenuOpen(false)} className={mobileNavLinkClass}>{t('reports')}</NavLink>
+              <NavLink to="/faq" onClick={() => setIsMobileMenuOpen(false)} className={mobileNavLinkClass}>{t('faq')}</NavLink>
+              
+              <div className="mt-4 pt-4 border-t border-[#1C2E5A] flex flex-col gap-4">
+                <div className="flex items-center bg-[#121E3D] rounded-full px-4 py-2 border border-[#1C2E5A] focus-within:border-[#D4AF37] transition-colors">
+                  <Search size={18} className="text-gray-400 mx-2 flex-shrink-0" />
+                  <input 
+                    type="text" 
+                    placeholder={t('searchPlaceholder')}
+                    className="bg-transparent border-none outline-none text-sm text-white w-full placeholder-gray-500"
+                  />
+                </div>
+                <button 
+                  onClick={() => {
+                    setLanguage(language === 'ar' ? 'en' : 'ar');
+                    setIsMobileMenuOpen(false);
+                  }}
+                  className="flex items-center justify-center gap-2 p-3 text-gray-300 hover:text-white bg-[#1C2E5A]/30 hover:bg-[#1C2E5A]/50 rounded-lg transition-colors border border-transparent hover:border-[#2A4075]"
+                >
+                  <Globe size={20} />
+                  <span className="font-bold uppercase">{language === 'ar' ? 'English' : 'العربية'}</span>
+                </button>
               </div>
-              <button 
-                onClick={() => {
-                  setLanguage(language === 'ar' ? 'en' : 'ar');
-                  setIsMobileMenuOpen(false);
-                }}
-                className="flex items-center justify-center gap-2 p-3 text-gray-300 hover:text-white bg-[#1C2E5A]/30 rounded-lg"
-              >
-                <Globe size={20} />
-                <span className="font-bold uppercase">{language === 'ar' ? 'English' : 'العربية'}</span>
-              </button>
-            </div>
-          </nav>
-        </div>
-      )}
+            </nav>
+          </motion.div>
+        )}
+      </AnimatePresence>
     </header>
   );
 };
