@@ -1,25 +1,49 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Search, Bell, Menu, User, Globe, LogOut, X, CheckCircle, AlertTriangle, Info } from 'lucide-react';
+import { Search, Bell, Menu, User, Globe, LogOut, X, CheckCircle, AlertTriangle, Info, Settings, Save } from 'lucide-react';
 import { NavLink, Link } from 'react-router-dom';
 import { motion, AnimatePresence } from 'motion/react';
 import { useLanguage } from '../context/LanguageContext';
 import { useSettings } from '../context/SettingsContext';
 import { auth, db, googleProvider, signInWithPopup, signOut, onAuthStateChanged } from '../firebase';
-import { collection, query, where, orderBy, onSnapshot, updateDoc, doc, serverTimestamp, addDoc } from 'firebase/firestore';
+import { collection, query, where, orderBy, onSnapshot, updateDoc, doc, serverTimestamp, addDoc, getDoc } from 'firebase/firestore';
 import type { User as FirebaseUser } from 'firebase/auth';
 
 export const Header = () => {
   const { t, language, setLanguage } = useLanguage();
   const { settings } = useSettings();
   const [user, setUser] = useState<FirebaseUser | null>(null);
+  const [isAdmin, setIsAdmin] = useState(false);
+  const [adminPathInput, setAdminPathInput] = useState('');
+  const [isEditingPath, setIsEditingPath] = useState(false);
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
   const [notifications, setNotifications] = useState<any[]>([]);
   const [showNotifications, setShowNotifications] = useState(false);
   const notificationRef = useRef<HTMLDivElement>(null);
+  const ADMIN_EMAIL = "ahmedhmeda67@gmail.com";
 
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, async (currentUser) => {
       setUser(currentUser);
+      
+      if (currentUser && currentUser.email) {
+        if (currentUser.email === ADMIN_EMAIL && currentUser.emailVerified) {
+          setIsAdmin(true);
+        } else {
+          try {
+            const adminDoc = await getDoc(doc(db, 'admins', currentUser.email));
+            if (adminDoc.exists() && adminDoc.data().permissions?.includes('manage_settings')) {
+              setIsAdmin(true);
+            } else {
+              setIsAdmin(false);
+            }
+          } catch (error) {
+            console.error("Error checking admin status:", error);
+            setIsAdmin(false);
+          }
+        }
+      } else {
+        setIsAdmin(false);
+      }
       
       // If user just logged in, we can send a welcome notification if they don't have any
       if (currentUser) {
@@ -28,6 +52,30 @@ export const Header = () => {
     });
     return () => unsubscribe();
   }, []);
+
+  useEffect(() => {
+    if (settings?.adminPath) {
+      setAdminPathInput(settings.adminPath);
+    }
+  }, [settings?.adminPath]);
+
+  const handleSaveAdminPath = async () => {
+    if (!isAdmin || !adminPathInput.trim()) return;
+    try {
+      let formattedPath = adminPathInput.trim();
+      if (!formattedPath.startsWith('/')) {
+        formattedPath = '/' + formattedPath;
+      }
+      await updateDoc(doc(db, 'settings', 'global'), {
+        adminPath: formattedPath
+      });
+      setIsEditingPath(false);
+      alert(language === 'ar' ? 'تم تحديث مسار لوحة التحكم بنجاح!' : 'Admin path updated successfully!');
+    } catch (error) {
+      console.error("Error updating admin path:", error);
+      alert(language === 'ar' ? 'حدث خطأ أثناء تحديث المسار' : 'Error updating path');
+    }
+  };
 
   useEffect(() => {
     if (!user) {
@@ -150,6 +198,37 @@ export const Header = () => {
 
         {/* Actions */}
         <div className="flex items-center gap-4">
+          {isAdmin && (
+            <div className="hidden lg:flex items-center gap-2 bg-[#1C2E5A]/30 border border-[#1C2E5A] px-3 py-1.5 rounded-lg">
+              {!isEditingPath ? (
+                <>
+                  <Link to={settings.adminPath || '/'} className="text-xs text-[#D4AF37] hover:underline font-bold">
+                    {language === 'ar' ? 'لوحة الإدارة' : 'Admin Panel'}
+                  </Link>
+                  <button onClick={() => setIsEditingPath(true)} className="text-gray-400 hover:text-white" title={language === 'ar' ? 'تعديل المسار السري' : 'Edit Secret Path'}>
+                    <Settings size={14} />
+                  </button>
+                </>
+              ) : (
+                <>
+                  <input 
+                    type="text" 
+                    value={adminPathInput}
+                    onChange={(e) => setAdminPathInput(e.target.value)}
+                    placeholder="/secret-path"
+                    className="bg-[#0A1128] border border-[#1C2E5A] focus:border-[#D4AF37] outline-none text-white text-xs px-2 py-1 rounded w-32"
+                  />
+                  <button onClick={handleSaveAdminPath} className="text-[#10B981] hover:text-white" title={language === 'ar' ? 'حفظ' : 'Save'}>
+                     <Save size={14} />
+                  </button>
+                  <button onClick={() => setIsEditingPath(false)} className="text-gray-400 hover:text-white" title={language === 'ar' ? 'إلغاء' : 'Cancel'}>
+                     <X size={14} />
+                  </button>
+                </>
+              )}
+            </div>
+          )}
+
           <div className="hidden md:flex items-center bg-[#121E3D] rounded-full px-4 py-2 border border-[#1C2E5A] focus-within:border-[#D4AF37] transition-colors">
             <Search size={18} className="text-gray-400 mx-2" />
             <input 
@@ -288,6 +367,24 @@ export const Header = () => {
               <NavLink to="/faq" onClick={() => setIsMobileMenuOpen(false)} className={mobileNavLinkClass}>{t('faq')}</NavLink>
               
               <div className="mt-4 pt-4 border-t border-[#1C2E5A] flex flex-col gap-4">
+                {isAdmin && (
+                  <div className="flex flex-col gap-2 p-3 bg-[#1C2E5A]/20 rounded-lg border border-[#1C2E5A]">
+                    <span className="text-sm font-bold text-[#D4AF37]">{language === 'ar' ? 'المسار السري للوحة الإدارة:' : 'Admin Secret Path:'}</span>
+                    <div className="flex items-center gap-2">
+                      <input 
+                        type="text" 
+                        value={adminPathInput}
+                        onChange={(e) => setAdminPathInput(e.target.value)}
+                        placeholder="/secret-path"
+                        className="bg-[#0A1128] border border-[#1C2E5A] focus:border-[#D4AF37] outline-none text-white text-sm px-3 py-2 rounded w-full"
+                      />
+                      <button onClick={handleSaveAdminPath} className="bg-[#10B981] text-white p-2 rounded hover:bg-[#059669] transition-colors">
+                        <Save size={18} />
+                      </button>
+                    </div>
+                  </div>
+                )}
+                
                 <div className="flex items-center bg-[#121E3D] rounded-full px-4 py-2 border border-[#1C2E5A] focus-within:border-[#D4AF37] transition-colors">
                   <Search size={18} className="text-gray-400 mx-2 flex-shrink-0" />
                   <input 

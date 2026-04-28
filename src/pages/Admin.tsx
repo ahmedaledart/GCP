@@ -1296,6 +1296,17 @@ const MarketSection = ({ commodities, logAction, onDownload, isSuperAdmin, admin
                 </td>
               </tr>
             )}
+            {commodities.length === 0 && (
+              <tr>
+                <td colSpan={10} className="p-16 text-center text-gray-500">
+                  <div className="flex flex-col items-center justify-center gap-2">
+                    <AlertCircle size={48} className="text-gray-600 mb-2 opacity-50" />
+                    <p className="text-lg">لا توجد سلع مضافة حالياً</p>
+                    <p className="text-sm opacity-70">قم بإضافة سلع يدوياً أو استيراد ملف CSV</p>
+                  </div>
+                </td>
+              </tr>
+            )}
           </tbody>
         </table>
       </div>
