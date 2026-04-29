@@ -3,7 +3,7 @@ import { Mail, MessageSquare, Send, User, CheckCircle, AlertCircle, Phone, MapPi
 import { useLanguage } from '../context/LanguageContext';
 import { useSettings } from '../context/SettingsContext';
 import { collection, addDoc, serverTimestamp } from 'firebase/firestore';
-import { db, handleFirestoreError, OperationType } from '../firebase';
+import { db, handleFirestoreError, OperationType, logUserActivity } from '../firebase';
 import { motion } from 'motion/react';
 
 export const Contact = () => {
@@ -28,6 +28,7 @@ export const Contact = () => {
         createdAt: serverTimestamp(),
         read: false
       });
+      await logUserActivity('إرسال رسالة', `قام بإرسال رسالة بعنوان: ${formData.subject}`);
 
       setStatus('success');
       setFormData({ name: '', email: '', subject: '', message: '' });

@@ -1,5 +1,5 @@
-import React from 'react';
-import { TrendingUp, Mail, Phone, MapPin, Facebook, Twitter, Linkedin, Instagram } from 'lucide-react';
+import React, { useState } from 'react';
+import { TrendingUp, Mail, Phone, MapPin, Facebook, Twitter, Linkedin, Instagram, X } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import { useLanguage } from '../context/LanguageContext';
 import { useSettings } from '../context/SettingsContext';
@@ -7,6 +7,28 @@ import { useSettings } from '../context/SettingsContext';
 export const Footer = () => {
   const { t, language } = useLanguage();
   const { settings } = useSettings();
+  const [activeModal, setActiveModal] = useState<'terms' | 'privacy' | 'disclaimer' | null>(null);
+
+  const modalContent = {
+    disclaimer: {
+      titleAr: 'إخلاء المسؤولية',
+      titleEn: 'Disclaimer',
+      contentAr: 'البيانات والأسعار المنشورة في منصة الأسعار العالمية مخصصة لأغراض المتابعة والتحليل فقط، ولا تُعد توصية استثمارية أو تجارية. قد تختلف الأسعار حسب المصدر ووقت التحديث، ولا تتحمل المنصة أي مسؤولية عن القرارات المتخذة بناءً على هذه البيانات.',
+      contentEn: 'The data and prices published on the Global Prices Platform are for monitoring and analysis purposes only and do not constitute investment or commercial advice. Prices may vary by source and time of update, and the platform bears no responsibility for decisions made based on this data.'
+    },
+    terms: {
+      titleAr: 'شروط الاستخدام',
+      titleEn: 'Terms of Use',
+      contentAr: 'باستخدامك للمنصة، فإنك توافق على استخدام البيانات بطريقة قانونية ومسؤولة، وعدم نسخ أو إعادة نشر المحتوى أو استغلاله تجاريًا دون إذن مسبق من إدارة المنصة.',
+      contentEn: 'By using the platform, you agree to use the data in a legal and responsible manner, and not to copy, republish, or commercially exploit the content without prior permission from the platform administration.'
+    },
+    privacy: {
+      titleAr: 'سياسة الخصوصية',
+      titleEn: 'Privacy Policy',
+      contentAr: 'تحترم المنصة خصوصية المستخدمين، ولا تقوم ببيع بياناتهم الشخصية. تُستخدم البيانات فقط لأغراض تشغيل الحسابات، تحسين الخدمات، الحماية، والتحقق من الهوية عند الحاجة.',
+      contentEn: 'The platform respects user privacy and does not sell their personal data. Data is used only for operating accounts, improving services, protection, and identity verification when necessary.'
+    }
+  };
 
   return (
     <footer className="bg-[#0A1128] border-t border-[#1C2E5A] pt-16 pb-8">
@@ -106,12 +128,51 @@ export const Footer = () => {
             &copy; {new Date().getFullYear()} {language === 'ar' ? settings.siteNameAr : settings.siteNameEn}. {t('rights')}
           </p>
           <div className="flex items-center gap-6">
-            <a href="#" className="text-gray-500 hover:text-white text-sm transition-colors">{t('terms')}</a>
-            <a href="#" className="text-gray-500 hover:text-white text-sm transition-colors">{t('privacy')}</a>
-            <a href="#" className="text-gray-500 hover:text-white text-sm transition-colors">{t('disclaimer')}</a>
+            <button onClick={() => setActiveModal('terms')} className="text-gray-500 hover:text-white text-sm transition-colors">{t('terms')}</button>
+            <button onClick={() => setActiveModal('privacy')} className="text-gray-500 hover:text-white text-sm transition-colors">{t('privacy')}</button>
+            <button onClick={() => setActiveModal('disclaimer')} className="text-gray-500 hover:text-white text-sm transition-colors">{t('disclaimer')}</button>
           </div>
         </div>
       </div>
+
+      {/* Policy Modal */}
+      {activeModal && (
+        <div className="fixed inset-0 z-50 flex bg-black/60 backdrop-blur-sm transition-opacity" onClick={() => setActiveModal(null)}>
+          <div 
+            className={`fixed top-0 bottom-0 ${language === 'ar' ? 'left-0 border-r animate-in slide-in-from-left' : 'right-0 border-l animate-in slide-in-from-right'} bg-[#0A1128] border-[#1C2E5A] w-full max-w-md overflow-hidden flex flex-col shadow-2xl duration-300`}
+            onClick={(e) => e.stopPropagation()}
+            dir={language === 'ar' ? 'rtl' : 'ltr'}
+          >
+            <div className="flex items-center justify-between p-6 border-b border-[#1C2E5A] bg-[#121E3D]">
+              <h2 className="text-xl font-bold text-white">
+                {language === 'ar' ? modalContent[activeModal].titleAr : modalContent[activeModal].titleEn}
+              </h2>
+              <button 
+                onClick={() => setActiveModal(null)}
+                className="text-gray-400 hover:text-white transition-colors p-2 hover:bg-[#1C2E5A] rounded-full"
+              >
+                <X size={24} />
+              </button>
+            </div>
+            <div className="p-6 overflow-y-auto flex-1">
+              <div className="prose prose-invert max-w-none">
+                <p className="text-gray-300 leading-relaxed text-base">
+                  {language === 'ar' ? modalContent[activeModal].contentAr : modalContent[activeModal].contentEn}
+                </p>
+              </div>
+            </div>
+            <div className="p-6 border-t border-[#1C2E5A] bg-[#121E3D]">
+              <button 
+                onClick={() => setActiveModal(null)}
+                className="w-full px-6 py-3 bg-[#D4AF37] text-[#0A1128] font-bold rounded-xl hover:bg-[#B5952F] transition-colors"
+              >
+                {language === 'ar' ? 'إغلاق' : 'Close'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </footer>
   );
 };
+

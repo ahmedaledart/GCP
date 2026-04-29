@@ -1,10 +1,10 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { Search, Bell, Menu, User, Globe, LogOut, X, CheckCircle, AlertTriangle, Info, Settings, Save } from 'lucide-react';
-import { NavLink, Link } from 'react-router-dom';
+import { NavLink, Link, useNavigate } from 'react-router-dom';
 import { motion, AnimatePresence } from 'motion/react';
 import { useLanguage } from '../context/LanguageContext';
 import { useSettings } from '../context/SettingsContext';
-import { auth, db, googleProvider, signInWithPopup, signOut, onAuthStateChanged } from '../firebase';
+import { auth, db, googleProvider, signInWithPopup, signOut, onAuthStateChanged, logUserActivity } from '../firebase';
 import { collection, query, where, orderBy, onSnapshot, updateDoc, doc, serverTimestamp, addDoc, getDoc } from 'firebase/firestore';
 import type { User as FirebaseUser } from 'firebase/auth';
 
@@ -18,15 +18,25 @@ export const Header = () => {
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
   const [notifications, setNotifications] = useState<any[]>([]);
   const [showNotifications, setShowNotifications] = useState(false);
+  const [searchQuery, setSearchQuery] = useState('');
   const notificationRef = useRef<HTMLDivElement>(null);
   const ADMIN_EMAIL = "ahmedhmeda67@gmail.com";
+  const navigate = useNavigate();
+
+  const handleSearchSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (searchQuery.trim()) {
+      navigate(`/?search=${encodeURIComponent(searchQuery.trim())}#table`);
+      setIsMobileMenuOpen(false);
+    }
+  };
 
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, async (currentUser) => {
       setUser(currentUser);
       
       if (currentUser && currentUser.email) {
-        if (currentUser.email === ADMIN_EMAIL && currentUser.emailVerified) {
+        if (currentUser.email === ADMIN_EMAIL) {
           setIsAdmin(true);
         } else {
           try {
@@ -118,6 +128,7 @@ export const Header = () => {
       
       // Send a welcome notification upon successful login
       if (result.user) {
+        await logUserActivity('تسجيل الدخول', 'قام المستخدم بتسجيل الدخول للمنصة');
         await addDoc(collection(db, 'notifications'), {
           userId: result.user.uid,
           titleAr: 'تسجيل دخول ناجح',
@@ -129,13 +140,18 @@ export const Header = () => {
           createdAt: serverTimestamp()
         });
       }
-    } catch (error) {
-      console.error("Error signing in with Google", error);
+    } catch (error: any) {
+      if (error?.code === 'auth/popup-closed-by-user') {
+        console.log("Sign-in popup closed by the user.");
+      } else {
+        console.error("Error signing in with Google", error);
+      }
     }
   };
 
   const handleLogout = async () => {
     try {
+      await logUserActivity('تسجيل الخروج', 'قام المستخدم بتسجيل الخروج من المنصة');
       await signOut(auth);
       setShowNotifications(false);
     } catch (error) {
@@ -198,45 +214,16 @@ export const Header = () => {
 
         {/* Actions */}
         <div className="flex items-center gap-4">
-          {isAdmin && (
-            <div className="hidden lg:flex items-center gap-2 bg-[#1C2E5A]/30 border border-[#1C2E5A] px-3 py-1.5 rounded-lg">
-              {!isEditingPath ? (
-                <>
-                  <Link to={settings.adminPath || '/'} className="text-xs text-[#D4AF37] hover:underline font-bold">
-                    {language === 'ar' ? 'لوحة الإدارة' : 'Admin Panel'}
-                  </Link>
-                  <button onClick={() => setIsEditingPath(true)} className="text-gray-400 hover:text-white" title={language === 'ar' ? 'تعديل المسار السري' : 'Edit Secret Path'}>
-                    <Settings size={14} />
-                  </button>
-                </>
-              ) : (
-                <>
-                  <input 
-                    type="text" 
-                    value={adminPathInput}
-                    onChange={(e) => setAdminPathInput(e.target.value)}
-                    placeholder="/secret-path"
-                    className="bg-[#0A1128] border border-[#1C2E5A] focus:border-[#D4AF37] outline-none text-white text-xs px-2 py-1 rounded w-32"
-                  />
-                  <button onClick={handleSaveAdminPath} className="text-[#10B981] hover:text-white" title={language === 'ar' ? 'حفظ' : 'Save'}>
-                     <Save size={14} />
-                  </button>
-                  <button onClick={() => setIsEditingPath(false)} className="text-gray-400 hover:text-white" title={language === 'ar' ? 'إلغاء' : 'Cancel'}>
-                     <X size={14} />
-                  </button>
-                </>
-              )}
-            </div>
-          )}
-
-          <div className="hidden md:flex items-center bg-[#121E3D] rounded-full px-4 py-2 border border-[#1C2E5A] focus-within:border-[#D4AF37] transition-colors">
+          <form onSubmit={handleSearchSubmit} className="hidden md:flex items-center bg-[#121E3D] rounded-full px-4 py-2 border border-[#1C2E5A] focus-within:border-[#D4AF37] transition-colors">
             <Search size={18} className="text-gray-400 mx-2" />
             <input 
               type="text" 
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
               placeholder={t('searchPlaceholder')}
               className="bg-transparent border-none outline-none text-sm text-white w-48 placeholder-gray-500"
             />
-          </div>
+          </form>
           
           {user && (
             <div className="relative" ref={notificationRef}>
@@ -367,32 +354,16 @@ export const Header = () => {
               <NavLink to="/faq" onClick={() => setIsMobileMenuOpen(false)} className={mobileNavLinkClass}>{t('faq')}</NavLink>
               
               <div className="mt-4 pt-4 border-t border-[#1C2E5A] flex flex-col gap-4">
-                {isAdmin && (
-                  <div className="flex flex-col gap-2 p-3 bg-[#1C2E5A]/20 rounded-lg border border-[#1C2E5A]">
-                    <span className="text-sm font-bold text-[#D4AF37]">{language === 'ar' ? 'المسار السري للوحة الإدارة:' : 'Admin Secret Path:'}</span>
-                    <div className="flex items-center gap-2">
-                      <input 
-                        type="text" 
-                        value={adminPathInput}
-                        onChange={(e) => setAdminPathInput(e.target.value)}
-                        placeholder="/secret-path"
-                        className="bg-[#0A1128] border border-[#1C2E5A] focus:border-[#D4AF37] outline-none text-white text-sm px-3 py-2 rounded w-full"
-                      />
-                      <button onClick={handleSaveAdminPath} className="bg-[#10B981] text-white p-2 rounded hover:bg-[#059669] transition-colors">
-                        <Save size={18} />
-                      </button>
-                    </div>
-                  </div>
-                )}
-                
-                <div className="flex items-center bg-[#121E3D] rounded-full px-4 py-2 border border-[#1C2E5A] focus-within:border-[#D4AF37] transition-colors">
+                <form onSubmit={handleSearchSubmit} className="flex items-center bg-[#121E3D] rounded-full px-4 py-2 border border-[#1C2E5A] focus-within:border-[#D4AF37] transition-colors">
                   <Search size={18} className="text-gray-400 mx-2 flex-shrink-0" />
                   <input 
                     type="text" 
+                    value={searchQuery}
+                    onChange={(e) => setSearchQuery(e.target.value)}
                     placeholder={t('searchPlaceholder')}
                     className="bg-transparent border-none outline-none text-sm text-white w-full placeholder-gray-500"
                   />
-                </div>
+                </form>
                 <button 
                   onClick={() => {
                     setLanguage(language === 'ar' ? 'en' : 'ar');

@@ -13,6 +13,7 @@ interface FetchedNews {
   time: string;
   url: string;
   isAlert: boolean;
+  sector: string;
 }
 
 export const NewsSection = () => {
@@ -21,6 +22,7 @@ export const NewsSection = () => {
   const [marketInsight, setMarketInsight] = useState<string>('');
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(false);
+  const [activeFilter, setActiveFilter] = useState<string>('all');
 
   useEffect(() => {
     fetchRealNewsAndInsights();
@@ -40,10 +42,14 @@ export const NewsSection = () => {
       if (!apiKey) throw new Error('API Key missing');
 
       const newsPrompt = language === 'ar'
-        ? `ابحث عن أحدث 4 أخبار اقتصادية ومالية عالمية من مواقع موثوقة.
-قم بإرجاع النتيجة كمصفوفة JSON فقط تحتوي على كائنات تخص: id, title, summary, source, time, url, isAlert.`
-        : `Search for the latest 4 global economic and financial news headlines from reliable sources.
-Return the result ONLY as a JSON array of objects with: id, title, summary, source, time, url, isAlert.`;
+        ? `ابحث عن أحدث 8 أخبار اقتصادية ومالية عالمية من مواقع موثوقة تخص الأسواق والسلع.
+هذا الطلب يتطلب منك إخراج النتيجة بتنسيق JSON فقط دون أي نصوص أخرى. بصيغة مصفوفة JSON تحتوي على كائنات تخص:
+[{"id":"1", "title":"...", "summary":"...", "source":"...", "time":"...", "url":"...", "isAlert":false, "sector":"energy"}]
+(sector يجب أن يكون واحد من: "energy", "metals", "agriculture", "general").`
+        : `Search for the latest 8 global economic and financial news headlines from reliable sources regarding markets and commodities.
+This request requires you to output the result in JSON format ONLY without any other text. As a JSON array of objects with:
+[{"id":"1", "title":"...", "summary":"...", "source":"...", "time":"...", "url":"...", "isAlert":false, "sector":"energy"}]
+(sector must be one of: "energy", "metals", "agriculture", "general").`;
 
       const insightPrompt = language === 'ar'
         ? `بناءً على الوضع الاقتصادي العالمي الحالي وتحركات أسعار السلع (النفط، الذهب، الغاز)، اكتب فقرة واحدة (insight) تشرح باختصار السبب وراء التحركات الحالية في السوق. ابدأ بعبارة "بوصلة السوق:".`
@@ -56,10 +62,14 @@ Return the result ONLY as a JSON array of objects with: id, title, summary, sour
       ]);
 
       let newsText = newsTextRaw;
+      const jsonMatch = newsText.match(/\[\s*\{.*\}\s*\]/s);
+      if (jsonMatch) {
+        newsText = jsonMatch[0];
+      }
       newsText = newsText.replace(/```json/g, '').replace(/```/g, '').trim();
       const parsedNews: FetchedNews[] = JSON.parse(newsText);
       
-      setNews(parsedNews.slice(0, 4));
+      setNews(parsedNews.slice(0, 8));
       setMarketInsight(insightText);
     } catch (err: any) {
       console.error('Failed to fetch real news:', err);
@@ -72,25 +82,55 @@ Return the result ONLY as a JSON array of objects with: id, title, summary, sour
         source: language === 'ar' ? 'أخبار السوق' : 'Market News',
         time: language === 'ar' ? mock.timeAr : mock.timeEn,
         url: '#',
-        isAlert: mock.typeAr === 'عاجل'
+        isAlert: mock.typeAr === 'عاجل',
+        sector: mock.id === 1 ? 'metals' : mock.id === 2 ? 'energy' : mock.id === 3 ? 'agriculture' : 'general'
       })));
     } finally {
       setLoading(false);
     }
   };
   
+  const filteredNews = news.filter((item) => {
+    if (activeFilter === 'all') return true;
+    if (activeFilter === 'breaking') return item.isAlert;
+    return item.sector === activeFilter;
+  });
+
+  const filters = [
+    { id: 'all', labelAr: 'الكل', labelEn: 'All' },
+    { id: 'breaking', labelAr: 'عاجل', labelEn: 'Breaking News' },
+    { id: 'energy', labelAr: 'الطاقة', labelEn: 'Energy' },
+    { id: 'metals', labelAr: 'المعادن', labelEn: 'Metals' },
+    { id: 'agriculture', labelAr: 'الزراعة', labelEn: 'Agriculture' },
+    { id: 'general', labelAr: 'عام', labelEn: 'General' },
+  ];
+
   return (
     <section className="py-16 bg-[#0A1128]">
       <div className="container mx-auto px-4">
-        <div className="flex items-center justify-between mb-6">
+        <div className="flex flex-col md:flex-row md:items-center justify-between mb-6 gap-4">
           <h2 className="text-2xl font-bold text-white flex items-center gap-3">
             <Newspaper className="text-[#D4AF37]" />
             {t('news')}
           </h2>
-          <a href="#" className="text-[#D4AF37] hover:text-[#E5C158] text-sm font-medium flex items-center gap-1 transition-colors">
-            {language === 'ar' ? 'المزيد من الأخبار' : 'More News'}
-            {language === 'ar' ? <ChevronLeft size={16} /> : <ChevronRight size={16} />}
-          </a>
+          
+          <div className="flex flex-wrap gap-2">
+            {filters.map((f) => (
+              <button
+                key={f.id}
+                onClick={() => setActiveFilter(f.id)}
+                className={`px-4 py-1.5 rounded-full text-sm font-medium transition-colors ${
+                  activeFilter === f.id
+                    ? f.id === 'breaking'
+                      ? 'bg-[#EF4444] text-white border border-[#EF4444]'
+                      : 'bg-[#D4AF37] text-[#0A1128] border border-[#D4AF37]'
+                    : 'bg-[#121E3D] text-gray-300 border border-[#1C2E5A] hover:border-[#D4AF37] hover:text-white'
+                }`}
+              >
+                {language === 'ar' ? f.labelAr : f.labelEn}
+              </button>
+            ))}
+          </div>
         </div>
 
         {/* AI Insight Bar */}
@@ -114,8 +154,15 @@ Return the result ONLY as a JSON array of objects with: id, title, summary, sour
                 <div className="w-24 h-4 bg-[#1C2E5A] rounded mt-auto"></div>
               </div>
             ))
+          ) : filteredNews.length === 0 ? (
+            <div className="col-span-full py-12 text-center flex flex-col items-center justify-center bg-[#121E3D] rounded-2xl border border-[#1C2E5A]">
+              <Newspaper size={48} className="text-gray-600 mb-4 opacity-50" />
+              <p className="text-gray-400 text-lg">
+                {language === 'ar' ? 'لا توجد أخبار متاحة لهذا الفلتر' : 'No news available for this filter'}
+              </p>
+            </div>
           ) : (
-            news.map((item) => {
+            filteredNews.map((item) => {
               const type = item.isAlert ? (language === 'ar' ? 'عاجل' : 'Breaking') : item.source;
               
               return (

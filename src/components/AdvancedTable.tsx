@@ -12,6 +12,9 @@ import autoTable from 'jspdf-autotable';
 import { LineChart, Line, ResponsiveContainer, YAxis, Tooltip, AreaChart, Area, XAxis, CartesianGrid } from 'recharts';
 import { motion, AnimatePresence } from 'motion/react';
 
+import { useLocation } from 'react-router-dom';
+import { logUserActivity } from '../firebase';
+
 type SortConfig = {
   key: keyof ReturnType<typeof useMarketData>['data'][0] | null;
   direction: 'asc' | 'desc';
@@ -39,6 +42,7 @@ const Sparkline = ({ data, trend }: { data: any[], trend: 'up' | 'down' | 'neutr
 export const AdvancedTable = () => {
   const { data: commoditiesData, connected, loading, error, lastUpdate, latency } = useMarketData();
   const { t, language } = useLanguage();
+  const location = useLocation();
   const [searchTerm, setSearchTerm] = useState('');
   const [debouncedSearchTerm, setDebouncedSearchTerm] = useState('');
   const [selectedSector, setSelectedSector] = useState<Sector | SectorEn | 'all'>('all');
@@ -46,6 +50,20 @@ export const AdvancedTable = () => {
   const [showColumnDropdown, setShowColumnDropdown] = useState(false);
   const [selectedCommodity, setSelectedCommodity] = useState<any>(null);
   const dropdownRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const searchParams = new URLSearchParams(location.search);
+    const q = searchParams.get('search');
+    if (q) {
+      setSearchTerm(decodeURIComponent(q));
+      
+      // Auto-scroll to table if redirected from search
+      const tableEl = document.getElementById('table');
+      if (tableEl && location.hash === '#table') {
+        setTimeout(() => tableEl.scrollIntoView({ behavior: 'smooth' }), 500);
+      }
+    }
+  }, [location.search, location.hash]);
 
   useEffect(() => {
     const handler = setTimeout(() => {
@@ -117,6 +135,7 @@ export const AdvancedTable = () => {
     const wb = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(wb, ws, "Prices");
     XLSX.writeFile(wb, "global_prices.xlsx");
+    logUserActivity('تصدير بيانات', 'قام المستخدم بتصدير البيانات بصيغة Excel');
   };
 
   const exportToCSV = () => {
@@ -125,6 +144,7 @@ export const AdvancedTable = () => {
       SheetNames: ["Prices"],
       Sheets: { "Prices": ws }
     }, "global_prices.csv", { bookType: 'csv' });
+    logUserActivity('تصدير بيانات', 'قام المستخدم بتصدير البيانات بصيغة CSV');
   };
 
   const exportToPDF = async () => {
@@ -283,6 +303,7 @@ export const AdvancedTable = () => {
     });
     
     doc.save("global_prices.pdf");
+    logUserActivity('تصدير بيانات', 'قام المستخدم بتصدير البيانات بصيغة PDF');
   };
 
   const filteredAndSortedData = useMemo(() => {

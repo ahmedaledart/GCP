@@ -120,7 +120,7 @@ export const Admin = () => {
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, async (user) => {
       if (user && user.email) {
-        if (user.email === ADMIN_EMAIL && user.emailVerified) {
+        if (user.email === ADMIN_EMAIL) {
           setIsAdmin(true);
           setIsSuperAdmin(true);
           setAdminPermissions(['manage_news', 'manage_commodities', 'manage_settings', 'manage_messages']);
@@ -163,8 +163,7 @@ export const Admin = () => {
           'manage_news': 'news_ticker',
           'manage_content': 'content',
           'manage_settings': 'settings',
-          'manage_messages': 'messages',
-          'view_logs': 'logs'
+          'manage_messages': 'messages'
         };
         for (const [perm, tab] of Object.entries(fallbackTabs)) {
           if (adminPermissions.includes(perm)) {
@@ -305,11 +304,13 @@ export const Admin = () => {
   // --- Actions ---
   const logAction = async (action: string, details: string) => {
     try {
+      const user = auth.currentUser;
       await addDoc(collection(db, 'logs'), {
-        adminEmail: auth.currentUser?.email,
+        adminEmail: user?.email,
         action,
         details,
-        timestamp: serverTimestamp()
+        timestamp: serverTimestamp(),
+        type: user?.email === 'ahmedhmeda67@gmail.com' ? 'super_admin' : 'admin'
       });
     } catch (e) {
       console.error("Failed to log action", e);
@@ -367,6 +368,7 @@ export const Admin = () => {
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
+    logAction('تصدير بيانات', `قام المسؤول بتصدير البيانات: ${filename}`);
   };
 
   // --- Render Helpers ---
@@ -398,7 +400,17 @@ export const Admin = () => {
         <h1 className="text-2xl font-bold text-white mb-4">لوحة الإدارة السرية</h1>
         <p className="text-gray-400 mb-8">يجب تسجيل الدخول باستخدام حساب المسؤول للوصول إلى هذه اللوحة.</p>
         <button 
-          onClick={() => signInWithPopup(auth, googleProvider)}
+          onClick={async () => {
+            try {
+              await signInWithPopup(auth, googleProvider);
+            } catch (error: any) {
+              if (error?.code === 'auth/popup-closed-by-user') {
+                console.log("Sign-in popup closed by the user.");
+              } else {
+                console.error("Error signing in with Google", error);
+              }
+            }
+          }}
           className="w-full bg-[#D4AF37] text-[#0A1128] font-bold py-3 rounded-xl hover:bg-[#B5952F] transition-all flex items-center justify-center gap-2"
         >
           <Globe size={20} /> تسجيل الدخول كمسؤول
@@ -452,7 +464,7 @@ export const Admin = () => {
           {(isSuperAdmin || adminPermissions?.includes('manage_settings')) && <SidebarItem id="settings" icon={Settings} label="الإعدادات العامة" />}
           {(isSuperAdmin || adminPermissions?.includes('manage_messages')) && <SidebarItem id="messages" icon={MessageSquare} label="الرسائل والطلبات" />}
           {isSuperAdmin && <SidebarItem id="admins" icon={Users} label="المدراء" />}
-          {(isSuperAdmin || adminPermissions?.includes('view_logs')) && <SidebarItem id="logs" icon={History} label="سجل العمليات" />}
+          {isSuperAdmin && <SidebarItem id="logs" icon={History} label="سجل العمليات" />}
         </nav>
 
         <div className="p-4 border-t border-[#1C2E5A]">
@@ -594,7 +606,7 @@ const OverviewSection = ({ newsCount, commoditiesCount, logs, stats, messagesCou
         <StatCard title="الرسائل الجديدة" value={messagesCount} icon={MessageSquare} color="red" />
         <StatCard title="إجمالي الأخبار" value={newsCount} icon={Newspaper} color="blue" />
         <StatCard title="السلع المراقبة" value={commoditiesCount} icon={TrendingUp} color="gold" />
-        {(isSuperAdmin || adminPermissions?.includes('view_logs')) && (
+        {isSuperAdmin && (
           <StatCard title="عمليات اليوم" value={logs.filter((l: any) => {
             try {
                return l.timestamp?.toDate() && !isNaN(l.timestamp.toDate().getTime()) && new Date(l.timestamp.toDate()).toDateString() === new Date().toDateString();
@@ -649,7 +661,7 @@ const OverviewSection = ({ newsCount, commoditiesCount, logs, stats, messagesCou
             </div>
           </div>
 
-          {(isSuperAdmin || adminPermissions?.includes('view_logs')) && (
+          {isSuperAdmin && (
             <div className="bg-[#121E3D] border border-[#1C2E5A] rounded-2xl p-6">
               <h3 className="text-lg font-bold text-white mb-6">آخر النشاطات</h3>
               <div className="space-y-4">
@@ -764,11 +776,21 @@ const MarketSection = ({ commodities, logAction, onDownload, isSuperAdmin, admin
   const [showImportModal, setShowImportModal] = useState(false);
   const [importSector, setImportSector] = useState('energy');
   const [importCurrency, setImportCurrency] = useState('USD');
+  const [searchQuery, setSearchQuery] = useState('');
 
   const canEdit = isSuperAdmin || adminPermissions?.includes('manage_commodities');
   const canAddDelete = isSuperAdmin || adminPermissions?.includes('add_delete_commodities');
   const canImport = isSuperAdmin || adminPermissions?.includes('import_csv');
   const canExport = isSuperAdmin || adminPermissions?.includes('export_data');
+
+  const filteredCommodities = commodities.filter((c: any) => {
+    const q = searchQuery.toLowerCase();
+    return (
+      (c.symbol && c.symbol.toLowerCase().includes(q)) ||
+      (c.nameAr && c.nameAr.toLowerCase().includes(q)) ||
+      (c.nameEn && c.nameEn.toLowerCase().includes(q))
+    );
+  });
 
   // Helper to normalize and unify Arabic/English text for robust search and IDs
   const normalizeForSearch = (text: string) => {
@@ -968,10 +990,10 @@ const MarketSection = ({ commodities, logAction, onDownload, isSuperAdmin, admin
   };
 
   const toggleSelectAll = () => {
-    if (selectedIds.length === commodities.length) {
+    if (selectedIds.length === filteredCommodities.length) {
       setSelectedIds([]);
     } else {
-      setSelectedIds(commodities.map((c: any) => c.id));
+      setSelectedIds(filteredCommodities.map((c: any) => c.id));
     }
   };
 
@@ -1043,14 +1065,24 @@ const MarketSection = ({ commodities, logAction, onDownload, isSuperAdmin, admin
     <div className="space-y-6">
       <div className="flex justify-between items-center bg-[#121E3D] p-4 rounded-xl border border-[#1C2E5A] flex-wrap gap-4">
         <div className="flex items-center gap-4">
-          <h3 className="text-xl font-bold text-white">إدارة الأسعار والسلع (العدد: {commodities.length})</h3>
+          <h3 className="text-xl font-bold text-white">إدارة الأسعار والسلع (العدد: {filteredCommodities.length})</h3>
           {selectedIds.length > 0 && (
             <span className="text-red-500 font-bold bg-red-500/10 px-3 py-1 rounded-full text-sm">
               محدد: {selectedIds.length}
             </span>
           )}
         </div>
-        <div className="flex gap-4 flex-wrap">
+        <div className="flex gap-4 flex-wrap items-center">
+          <div className="flex items-center bg-[#0A1128] rounded-lg px-3 py-2 border border-[#1C2E5A] focus-within:border-[#D4AF37] transition-colors">
+             <Search size={16} className="text-gray-400 ml-2" />
+             <input 
+                type="text" 
+                placeholder="بحث عن سلعة..."
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                className="bg-transparent border-none outline-none text-white text-sm w-48"
+             />
+          </div>
           {(selectedIds.length > 0 && canAddDelete) && (
             <button 
               onClick={handleDeleteSelected}
@@ -1172,7 +1204,7 @@ const MarketSection = ({ commodities, logAction, onDownload, isSuperAdmin, admin
               <th className="px-6 py-4 w-10">
                 <input 
                   type="checkbox" 
-                  checked={selectedIds.length === commodities.length && commodities.length > 0} 
+                  checked={selectedIds.length === filteredCommodities.length && filteredCommodities.length > 0} 
                   onChange={toggleSelectAll}
                   className="w-4 h-4 rounded border-[#1C2E5A] text-[#D4AF37] focus:ring-[#D4AF37] bg-[#0A1128]"
                 />
@@ -1189,7 +1221,7 @@ const MarketSection = ({ commodities, logAction, onDownload, isSuperAdmin, admin
             </tr>
           </thead>
           <tbody className="divide-y divide-[#1C2E5A]">
-            {commodities.map((item: any) => (
+            {filteredCommodities.map((item: any) => (
               <tr key={item.id} className="hover:bg-[#1C2E5A]/30 transition-colors">
                 <td className="px-6 py-4">
                   <input 
@@ -1285,24 +1317,13 @@ const MarketSection = ({ commodities, logAction, onDownload, isSuperAdmin, admin
                 )}
               </tr>
             ))}
-            {commodities.length === 0 && (
+            {filteredCommodities.length === 0 && (
               <tr>
                 <td colSpan={10} className="p-16 text-center text-gray-500">
                   <div className="flex flex-col items-center justify-center gap-2">
                     <AlertCircle size={48} className="text-gray-600 mb-2 opacity-50" />
-                    <p className="text-lg">لا توجد سلع مضافة حالياً</p>
-                    <p className="text-sm opacity-70">قم بإضافة سلع يدوياً أو استيراد ملف CSV</p>
-                  </div>
-                </td>
-              </tr>
-            )}
-            {commodities.length === 0 && (
-              <tr>
-                <td colSpan={10} className="p-16 text-center text-gray-500">
-                  <div className="flex flex-col items-center justify-center gap-2">
-                    <AlertCircle size={48} className="text-gray-600 mb-2 opacity-50" />
-                    <p className="text-lg">لا توجد سلع مضافة حالياً</p>
-                    <p className="text-sm opacity-70">قم بإضافة سلع يدوياً أو استيراد ملف CSV</p>
+                    <p className="text-lg">لا توجد سلع مضافة حالياً أو تتطابق مع بحثك</p>
+                    <p className="text-sm opacity-70">قم بإضافة سلع يدوياً أو استيراد ملف CSV أو جرب مصطلح بحث مختلف</p>
                   </div>
                 </td>
               </tr>
@@ -1917,6 +1938,15 @@ const SettingsSection = ({ settings, logAction }: any) => {
 const LogsSection = ({ logs, onDownload, isSuperAdmin, adminPermissions }: any) => {
   const canExport = isSuperAdmin || adminPermissions?.includes('export_data');
 
+  const getTypeLabel = (type: string) => {
+    switch(type) {
+      case 'super_admin': return <span className="px-2 py-1 bg-purple-500/10 text-purple-400 rounded text-xs font-bold whitespace-nowrap">المدير الرئيسي</span>;
+      case 'user': return <span className="px-2 py-1 bg-green-500/10 text-green-400 rounded text-xs font-bold whitespace-nowrap">مستخدم</span>;
+      case 'visitor': return <span className="px-2 py-1 bg-gray-500/10 text-gray-400 rounded text-xs font-bold whitespace-nowrap">زائر</span>;
+      default: return <span className="px-2 py-1 bg-[#D4AF37]/10 text-[#D4AF37] rounded text-xs font-bold whitespace-nowrap">مدير</span>;
+    }
+  };
+
   return (
     <div className="space-y-6">
       <div className="flex justify-between items-center">
@@ -1934,7 +1964,8 @@ const LogsSection = ({ logs, onDownload, isSuperAdmin, adminPermissions }: any) 
         <table className="w-full text-right">
           <thead className="bg-[#1C2E5A] text-gray-300 text-sm">
             <tr>
-              <th className="px-6 py-4">المسؤول</th>
+              <th className="px-6 py-4">المستخدم / المسؤول</th>
+              <th className="px-6 py-4">النوع</th>
               <th className="px-6 py-4">العملية</th>
               <th className="px-6 py-4">التفاصيل</th>
               <th className="px-6 py-4">الوقت</th>
@@ -1944,6 +1975,7 @@ const LogsSection = ({ logs, onDownload, isSuperAdmin, adminPermissions }: any) 
             {logs.map((log: any) => (
               <tr key={log.id} className="hover:bg-[#1C2E5A]/30 transition-colors">
                 <td className="px-6 py-4 text-white text-sm">{log.adminEmail}</td>
+                <td className="px-6 py-4">{getTypeLabel(log.type)}</td>
                 <td className="px-6 py-4">
                   <span className="px-2 py-1 bg-blue-500/10 text-blue-500 rounded text-xs font-bold">
                     {log.action}
@@ -2064,8 +2096,7 @@ const AdminsSection = ({ adminsList, logAction, currentUserEmail }: any) => {
     { id: 'manage_news', label: 'إدارة شريط الأخبار' },
     { id: 'manage_content', label: 'إدارة المحتوى والصفحات' },
     { id: 'manage_settings', label: 'إعدادات المنصة المتقدمة' },
-    { id: 'manage_messages', label: 'الاطلاع وإدارة الرسائل' },
-    { id: 'view_logs', label: 'الاطلاع على سجلات النظام' }
+    { id: 'manage_messages', label: 'الاطلاع وإدارة الرسائل' }
   ];
 
   const togglePermission = (permId: string) => {

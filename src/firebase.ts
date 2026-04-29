@@ -1,6 +1,6 @@
 import { initializeApp } from 'firebase/app';
 import { getAuth, GoogleAuthProvider, signInWithPopup, signOut, onAuthStateChanged } from 'firebase/auth';
-import { getFirestore } from 'firebase/firestore';
+import { getFirestore, addDoc, collection, serverTimestamp } from 'firebase/firestore';
 import firebaseConfig from '../firebase-applet-config.json';
 
 const app = initializeApp(firebaseConfig);
@@ -57,6 +57,21 @@ export function handleFirestoreError(error: any, operationType: OperationType, p
   }
   console.error('Firestore Error: ', JSON.stringify(errInfo));
   throw new Error(JSON.stringify(errInfo));
+}
+
+export async function logUserActivity(action: string, details: string) {
+  try {
+    const user = auth.currentUser;
+    await addDoc(collection(db, 'logs'), {
+      adminEmail: user?.email || 'زائر',
+      action,
+      details,
+      timestamp: serverTimestamp(),
+      type: user ? (user.email === 'ahmedhmeda67@gmail.com' ? 'super_admin' : 'user') : 'visitor'
+    });
+  } catch (error) {
+    console.error('Failed to log user activity', error);
+  }
 }
 
 export { signInWithPopup, signOut, onAuthStateChanged };
