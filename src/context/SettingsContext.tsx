@@ -1,57 +1,42 @@
 import React, { createContext, useContext, useEffect, useState } from 'react';
-import { doc, onSnapshot } from 'firebase/firestore';
-import { db, handleFirestoreError, OperationType } from '../firebase';
+import { supabase } from '../lib/supabase';
 
 interface SiteSettings {
   siteNameAr: string;
   siteNameEn: string;
   descriptionAr: string;
   descriptionEn: string;
-  logoUrl: string;
+  siteLogo: string;
+  isSiteActive: boolean;
+  maintenanceMessageAr: string;
+  maintenanceMessageEn: string;
   contactEmail: string;
   contactPhone: string;
-  addressAr: string;
-  addressEn: string;
-  socialLinks: {
-    facebook: string;
-    twitter: string;
-    linkedin: string;
-    instagram: string;
-  };
+  contactAddressAr: string;
+  contactAddressEn: string;
+  facebookUrl: string;
+  twitterUrl: string;
+  linkedinUrl: string;
   adminPath: string;
-  sectorApis: {
-    commodities: string;
-    metals: string;
-    energy: string;
-    agriculture: string;
-  };
-  isSiteActive: boolean;
 }
 
 const defaultSettings: SiteSettings = {
-  siteNameAr: 'المنصة الليبية لمتابعة الاقتصاد العالمي',
-  siteNameEn: 'Libyan Platform for Global Economy Monitoring',
-  descriptionAr: 'منصة رقمية متقدمة توفر بيانات لحظية وتحليلات دقيقة لأسعار السلع والمعادن والطاقة العالمية.',
-  descriptionEn: 'An advanced digital platform providing real-time data and accurate analytics for global commodity, metal, and energy prices.',
-  logoUrl: '',
-  contactEmail: 'info@ltnet.ly',
-  contactPhone: '0213607085',
-  addressAr: 'طرابلس - بن عاشور أمام مسجد باقي',
-  addressEn: 'Tripoli - Bin Ashour, opposite Baqi Mosque',
-  socialLinks: {
-    facebook: '#',
-    twitter: '#',
-    linkedin: '#',
-    instagram: '#'
-  },
-  adminPath: '/admin-portal-secret-access-2024',
-  sectorApis: {
-    commodities: '',
-    metals: '',
-    energy: '',
-    agriculture: ''
-  },
-  isSiteActive: true
+  siteNameAr: 'منصة تسعير السلع العالمية',
+  siteNameEn: 'Global Commodities Platform',
+  descriptionAr: 'المنصة الرائدة لتتبع أسعار السلع والمعادن العالمية لحظة بلحظة مع تحليلات دقيقة وتقارير حصرية.',
+  descriptionEn: 'The leading platform for tracking global commodity and metal prices in real-time with accurate analytics and exclusive reports.',
+  siteLogo: 'https://i.postimg.cc/vTzC2Jbx/January-05-2026-1-removebg-preview.png',
+  isSiteActive: true,
+  maintenanceMessageAr: 'نعمل حاليًا على تحديث منصة الأسعار العالمية، يرجى العودة لاحقًا.',
+  maintenanceMessageEn: 'We are currently updating the global pricing platform, please check back later.',
+  contactEmail: 'info@globalprices.com',
+  contactPhone: '+1 234 567 890',
+  contactAddressAr: 'شارع المال والأعمال، الطابق 15، لندن، المملكة المتحدة',
+  contactAddressEn: 'Finance St, 15th Floor, London, UK',
+  facebookUrl: '#',
+  twitterUrl: '#',
+  linkedinUrl: '#',
+  adminPath: '/admin',
 };
 
 interface SettingsContextType {
@@ -69,18 +54,55 @@ export const SettingsProvider: React.FC<{ children: React.ReactNode }> = ({ chil
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    const path = 'settings/global';
-    const unsubscribe = onSnapshot(doc(db, 'settings', 'global'), (snapshot) => {
-      if (snapshot.exists()) {
-        setSettings({ ...defaultSettings, ...snapshot.data() } as SiteSettings);
-      }
-      setLoading(false);
-    }, (error) => {
-      handleFirestoreError(error, OperationType.GET, path);
-      setLoading(false);
-    });
+    let isMounted = true;
+    
+    // Fallback: Also try to read from local API if needed or just use default data
+    const fetchPlatformStatus = async () => {
+      try {
+        const { data, error } = await supabase
+          .from('platform_settings')
+          .select('value')
+          .eq('key', 'platform_status')
+          .single();
+          
+        if (error) {
+          console.warn('Could not load platform_status from Supabase:', error);
+          if (isMounted) setLoading(false);
+          return;
+        }
 
-    return () => unsubscribe();
+        if (isMounted && data) {
+          setSettings(prev => ({
+            ...prev,
+            isSiteActive: data.value === 'open'
+          }));
+          setLoading(false);
+        }
+      } catch (err) {
+        console.error('Error fetching platform settings:', err);
+        if (isMounted) setLoading(false);
+      }
+    };
+
+    fetchPlatformStatus();
+
+    // Subscribe to platform_settings changes
+    const subscription = supabase
+      .channel('platform-settings-channel')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'platform_settings' }, (payload) => {
+        if (payload.new && (payload.new as any).key === 'platform_status') {
+          setSettings(prev => ({
+            ...prev,
+            isSiteActive: (payload.new as any).value === 'open'
+          }));
+        }
+      })
+      .subscribe();
+
+    return () => {
+      isMounted = false;
+      supabase.removeChannel(subscription);
+    };
   }, []);
 
   return (
@@ -91,3 +113,4 @@ export const SettingsProvider: React.FC<{ children: React.ReactNode }> = ({ chil
 };
 
 export const useSettings = () => useContext(SettingsContext);
+

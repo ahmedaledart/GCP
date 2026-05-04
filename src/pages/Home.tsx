@@ -7,8 +7,9 @@ import { NewsSection } from '../components/NewsSection';
 import { WhyChooseUs } from '../components/WhyChooseUs';
 import { FileText, ChevronRight, TrendingUp } from 'lucide-react';
 import { useLanguage } from '../context/LanguageContext';
-import { collection, query, where, orderBy, limit, getDocs } from 'firebase/firestore';
-import { db } from '../firebase';
+import { 
+  db, collection, query, where, orderBy, limit, getDocs 
+} from '../lib/api';
 import { Link } from 'react-router-dom';
 
 export const Home = () => {

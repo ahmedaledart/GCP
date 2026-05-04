@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { marketNews as mockMarketNews } from '../data/mockData';
 import { Newspaper, ChevronLeft, ChevronRight, AlertTriangle, Loader2, ExternalLink } from 'lucide-react';
 import { useLanguage } from '../context/LanguageContext';
-import { GoogleGenAI } from '@google/genai';
+import { GoogleGenAI, Type } from '@google/genai';
 import { generateWithRetry } from '../services/geminiService';
 
 interface FetchedNews {
@@ -42,32 +42,50 @@ export const NewsSection = () => {
       if (!apiKey) throw new Error('API Key missing');
 
       const newsPrompt = language === 'ar'
-        ? `ابحث عن أحدث 8 أخبار اقتصادية ومالية عالمية من مواقع موثوقة تخص الأسواق والسلع.
-هذا الطلب يتطلب منك إخراج النتيجة بتنسيق JSON فقط دون أي نصوص أخرى. بصيغة مصفوفة JSON تحتوي على كائنات تخص:
-[{"id":"1", "title":"...", "summary":"...", "source":"...", "time":"...", "url":"...", "isAlert":false, "sector":"energy"}]
-(sector يجب أن يكون واحد من: "energy", "metals", "agriculture", "general").`
-        : `Search for the latest 8 global economic and financial news headlines from reliable sources regarding markets and commodities.
-This request requires you to output the result in JSON format ONLY without any other text. As a JSON array of objects with:
-[{"id":"1", "title":"...", "summary":"...", "source":"...", "time":"...", "url":"...", "isAlert":false, "sector":"energy"}]
-(sector must be one of: "energy", "metals", "agriculture", "general").`;
+        ? `ابحث عن أحدث 8 أخبار اقتصادية ومالية عالمية من مواقع موثوقة تخص الأسواق والسلع. قم بالإجابة بمصفوفة JSON.`
+        : `Search for the latest 8 global economic and financial news headlines from reliable sources regarding markets and commodities. Output as JSON array.`;
 
       const insightPrompt = language === 'ar'
         ? `بناءً على الوضع الاقتصادي العالمي الحالي وتحركات أسعار السلع (النفط، الذهب، الغاز)، اكتب فقرة واحدة (insight) تشرح باختصار السبب وراء التحركات الحالية في السوق. ابدأ بعبارة "بوصلة السوق:".`
         : `Based on current global economic conditions and commodity price movements (Oil, Gold, Gas), write a single paragraph (insight) briefly explaining the reason behind current market moves. Start with "Market Compass:".`;
 
+      const newsSchema = {
+        type: Type.ARRAY,
+        items: {
+          type: Type.OBJECT,
+          properties: {
+            id: { type: Type.STRING },
+            title: { type: Type.STRING },
+            summary: { type: Type.STRING },
+            source: { type: Type.STRING },
+            time: { type: Type.STRING },
+            url: { type: Type.STRING },
+            isAlert: { type: Type.BOOLEAN },
+            sector: { type: Type.STRING }
+          },
+          required: ["id", "title", "summary", "source", "time", "url", "isAlert", "sector"]
+        }
+      };
+
       // Parallelize both requests with retry logic
       const [newsTextRaw, insightText] = await Promise.all([
-        generateWithRetry(apiKey, newsPrompt, { search: true }),
+        generateWithRetry(apiKey, newsPrompt, { search: true, json: true, schema: newsSchema }),
         generateWithRetry(apiKey, insightPrompt, { search: true })
       ]);
 
-      let newsText = newsTextRaw;
-      const jsonMatch = newsText.match(/\[\s*\{.*\}\s*\]/s);
-      if (jsonMatch) {
-        newsText = jsonMatch[0];
+      let parsedNews: FetchedNews[] = [];
+      try {
+        let newsText = newsTextRaw;
+        const jsonMatch = newsText.match(/\[\s*\{.*\}\s*\]/s);
+        if (jsonMatch) {
+          newsText = jsonMatch[0];
+        }
+        newsText = newsText.replace(/```json/g, '').replace(/```/g, '').trim();
+        parsedNews = JSON.parse(newsText);
+      } catch (parseError) {
+        console.error('Failed to parse news JSON:', parseError, 'Raw response:', newsTextRaw);
+        throw parseError; // Rethrow to trigger fallback
       }
-      newsText = newsText.replace(/```json/g, '').replace(/```/g, '').trim();
-      const parsedNews: FetchedNews[] = JSON.parse(newsText);
       
       setNews(parsedNews.slice(0, 8));
       setMarketInsight(insightText);

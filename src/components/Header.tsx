@@ -4,21 +4,24 @@ import { NavLink, Link, useNavigate } from 'react-router-dom';
 import { motion, AnimatePresence } from 'motion/react';
 import { useLanguage } from '../context/LanguageContext';
 import { useSettings } from '../context/SettingsContext';
-import { auth, db, googleProvider, signInWithPopup, signOut, onAuthStateChanged, logUserActivity } from '../firebase';
-import { collection, query, where, orderBy, onSnapshot, updateDoc, doc, serverTimestamp, addDoc, getDoc } from 'firebase/firestore';
-import type { User as FirebaseUser } from 'firebase/auth';
+import { 
+  auth, db, googleProvider, signInWithPopup, signOut, 
+  onAuthStateChanged, logUserActivity, collection, query, 
+  where, orderBy, onSnapshot, updateDoc, doc, serverTimestamp, 
+  addDoc, getDoc 
+} from '../lib/api';
+import { AuthModal } from './AuthModal';
 
 export const Header = () => {
   const { t, language, setLanguage } = useLanguage();
   const { settings } = useSettings();
-  const [user, setUser] = useState<FirebaseUser | null>(null);
+  const [user, setUser] = useState<any | null>(null);
   const [isAdmin, setIsAdmin] = useState(false);
-  const [adminPathInput, setAdminPathInput] = useState('');
-  const [isEditingPath, setIsEditingPath] = useState(false);
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
   const [notifications, setNotifications] = useState<any[]>([]);
   const [showNotifications, setShowNotifications] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
+  const [isAuthModalOpen, setIsAuthModalOpen] = useState(false);
   const notificationRef = useRef<HTMLDivElement>(null);
   const ADMIN_EMAIL = "ahmedhmeda67@gmail.com";
   const navigate = useNavigate();
@@ -41,7 +44,7 @@ export const Header = () => {
         } else {
           try {
             const adminDoc = await getDoc(doc(db, 'admins', currentUser.email));
-            if (adminDoc.exists() && adminDoc.data().permissions?.includes('manage_settings')) {
+            if (adminDoc.exists()) {
               setIsAdmin(true);
             } else {
               setIsAdmin(false);
@@ -54,38 +57,9 @@ export const Header = () => {
       } else {
         setIsAdmin(false);
       }
-      
-      // If user just logged in, we can send a welcome notification if they don't have any
-      if (currentUser) {
-        // We will just listen to notifications
-      }
     });
     return () => unsubscribe();
   }, []);
-
-  useEffect(() => {
-    if (settings?.adminPath) {
-      setAdminPathInput(settings.adminPath);
-    }
-  }, [settings?.adminPath]);
-
-  const handleSaveAdminPath = async () => {
-    if (!isAdmin || !adminPathInput.trim()) return;
-    try {
-      let formattedPath = adminPathInput.trim();
-      if (!formattedPath.startsWith('/')) {
-        formattedPath = '/' + formattedPath;
-      }
-      await updateDoc(doc(db, 'settings', 'global'), {
-        adminPath: formattedPath
-      });
-      setIsEditingPath(false);
-      alert(language === 'ar' ? 'تم تحديث مسار لوحة التحكم بنجاح!' : 'Admin path updated successfully!');
-    } catch (error) {
-      console.error("Error updating admin path:", error);
-      alert(language === 'ar' ? 'حدث خطأ أثناء تحديث المسار' : 'Error updating path');
-    }
-  };
 
   useEffect(() => {
     if (!user) {
@@ -122,31 +96,8 @@ export const Header = () => {
     return () => document.removeEventListener('mousedown', handleClickOutside);
   }, []);
 
-  const handleLogin = async () => {
-    try {
-      const result = await signInWithPopup(auth, googleProvider);
-      
-      // Send a welcome notification upon successful login
-      if (result.user) {
-        await logUserActivity('تسجيل الدخول', 'قام المستخدم بتسجيل الدخول للمنصة');
-        await addDoc(collection(db, 'notifications'), {
-          userId: result.user.uid,
-          titleAr: 'تسجيل دخول ناجح',
-          titleEn: 'Successful Login',
-          messageAr: `مرحباً بك ${result.user.displayName || result.user.email} في منصة أسعار السلع.`,
-          messageEn: `Welcome ${result.user.displayName || result.user.email} to the Commodities Prices platform.`,
-          type: 'success',
-          read: false,
-          createdAt: serverTimestamp()
-        });
-      }
-    } catch (error: any) {
-      if (error?.code === 'auth/popup-closed-by-user') {
-        console.log("Sign-in popup closed by the user.");
-      } else {
-        console.error("Error signing in with Google", error);
-      }
-    }
+  const handleLogin = () => {
+    setIsAuthModalOpen(true);
   };
 
   const handleLogout = async () => {
@@ -190,7 +141,7 @@ export const Header = () => {
         {/* Logo */}
         <Link to="/" className="flex items-center gap-3">
           <img 
-            src={settings.logoUrl || "https://i.postimg.cc/vTzC2Jbx/January-05-2026-1-removebg-preview.png"} 
+            src={settings.siteLogo || "https://i.postimg.cc/vTzC2Jbx/January-05-2026-1-removebg-preview.png"} 
             alt="Logo" 
             className="w-12 h-12 object-contain" 
             referrerPolicy="no-referrer" 
@@ -210,6 +161,11 @@ export const Header = () => {
           <NavLink to="/news" className={navLinkClass}>{t('news')}</NavLink>
           <NavLink to="/reports" className={navLinkClass}>{t('reports')}</NavLink>
           <NavLink to="/faq" className={navLinkClass}>{t('faq')}</NavLink>
+          {isAdmin && (
+            <Link to="/admin" className="px-3 py-1 bg-[#D4AF37]/10 text-[#D4AF37] rounded-lg border border-[#D4AF37]/30 text-xs font-bold hover:bg-[#D4AF37]/20 transition-all">
+              {language === 'ar' ? 'لوحة التحكم' : 'Admin Panel'}
+            </Link>
+          )}
         </nav>
 
         {/* Actions */}
@@ -239,71 +195,65 @@ export const Header = () => {
                 )}
               </button>
 
-              {showNotifications && (
-                <div className={`absolute top-full mt-2 ${language === 'ar' ? 'left-0' : 'right-0'} w-80 bg-[#121E3D] border border-[#1C2E5A] rounded-xl shadow-2xl z-50 overflow-hidden`}>
-                  <div className="p-4 border-b border-[#1C2E5A] flex items-center justify-between bg-[#0A1128]">
-                    <h3 className="text-white font-bold">{language === 'ar' ? 'التنبيهات' : 'Notifications'}</h3>
-                    {unreadCount > 0 && (
-                      <button onClick={markAllAsRead} className="text-xs text-[#D4AF37] hover:underline">
-                        {language === 'ar' ? 'تحديد الكل كمقروء' : 'Mark all as read'}
-                      </button>
-                    )}
-                  </div>
-                  <div className="max-h-96 overflow-y-auto">
-                    {notifications.length === 0 ? (
-                      <div className="p-8 text-center text-gray-500 text-sm">
-                        {language === 'ar' ? 'لا توجد تنبيهات حالياً' : 'No notifications yet'}
-                      </div>
-                    ) : (
-                      <div className="divide-y divide-[#1C2E5A]">
-                        {notifications.map((notif) => (
-                          <div 
-                            key={notif.id} 
-                            className={`p-4 hover:bg-[#1C2E5A]/30 transition-colors cursor-pointer ${!notif.read ? 'bg-[#1C2E5A]/10' : ''}`}
-                            onClick={() => markAsRead(notif.id)}
-                          >
-                            <div className="flex gap-3">
-                              <div className={`mt-1 flex-shrink-0 ${notif.type === 'alert' ? 'text-red-500' : notif.type === 'success' ? 'text-green-500' : 'text-blue-500'}`}>
-                                {notif.type === 'alert' ? <AlertTriangle size={16} /> : notif.type === 'success' ? <CheckCircle size={16} /> : <Info size={16} />}
+              <AnimatePresence>
+                {showNotifications && (
+                  <motion.div 
+                    initial={{ opacity: 0, scale: 0.95, y: -10 }}
+                    animate={{ opacity: 1, scale: 1, y: 0 }}
+                    exit={{ opacity: 0, scale: 0.95, y: -10 }}
+                    className={`absolute top-full mt-2 ${language === 'ar' ? 'left-0' : 'right-0'} w-80 bg-[#121E3D] border border-[#1C2E5A] rounded-xl shadow-2xl z-50 overflow-hidden`}
+                  >
+                    <div className="p-4 border-b border-[#1C2E5A] flex items-center justify-between bg-[#0A1128]">
+                      <h3 className="text-white font-bold">{language === 'ar' ? 'التنبيهات' : 'Notifications'}</h3>
+                      {unreadCount > 0 && (
+                        <button onClick={markAllAsRead} className="text-xs text-[#D4AF37] hover:underline">
+                          {language === 'ar' ? 'تحديد الكل كمقروء' : 'Mark all as read'}
+                        </button>
+                      )}
+                    </div>
+                    <div className="max-h-96 overflow-y-auto">
+                      {notifications.length === 0 ? (
+                        <div className="p-8 text-center text-gray-500 text-sm">
+                          {language === 'ar' ? 'لا توجد تنبيهات حالياً' : 'No notifications yet'}
+                        </div>
+                      ) : (
+                        <div className="divide-y divide-[#1C2E5A]">
+                          {notifications.map((notif) => (
+                            <div 
+                              key={notif.id} 
+                              className={`p-4 hover:bg-[#1C2E5A]/30 transition-colors cursor-pointer ${!notif.read ? 'bg-[#1C2E5A]/10' : ''}`}
+                              onClick={() => markAsRead(notif.id)}
+                            >
+                              <div className="flex gap-3">
+                                <div className={`mt-1 flex-shrink-0 ${notif.type === 'alert' ? 'text-red-500' : notif.type === 'success' ? 'text-green-500' : 'text-blue-500'}`}>
+                                  {notif.type === 'alert' ? <AlertTriangle size={16} /> : notif.type === 'success' ? <CheckCircle size={16} /> : <Info size={16} />}
+                                </div>
+                                <div className="flex-1">
+                                  <h4 className={`text-sm font-bold ${!notif.read ? 'text-white' : 'text-gray-300'}`}>
+                                    {language === 'ar' ? notif.titleAr : notif.titleEn}
+                                  </h4>
+                                  <p className="text-xs text-gray-400 mt-1 line-clamp-2">
+                                    {language === 'ar' ? notif.messageAr : notif.messageEn}
+                                  </p>
+                                </div>
+                                {!notif.read && (
+                                  <div className="w-2 h-2 bg-[#D4AF37] rounded-full mt-1.5 flex-shrink-0"></div>
+                                )}
                               </div>
-                              <div>
-                                <h4 className={`text-sm font-bold ${!notif.read ? 'text-white' : 'text-gray-300'}`}>
-                                  {language === 'ar' ? notif.titleAr : notif.titleEn}
-                                </h4>
-                                <p className="text-xs text-gray-400 mt-1 line-clamp-2">
-                                  {language === 'ar' ? notif.messageAr : notif.messageEn}
-                                </p>
-                                <span className="text-[10px] text-gray-500 mt-2 block">
-                                  {(() => {
-                                    try {
-                                      if (notif.createdAt?.toDate) {
-                                        const d = notif.createdAt.toDate();
-                                        return isNaN(d.getTime()) ? '' : d.toLocaleString(language === 'ar' ? 'ar-EG' : 'en-US');
-                                      }
-                                      return '';
-                                    } catch {
-                                      return '';
-                                    }
-                                  })()}
-                                </span>
-                              </div>
-                              {!notif.read && (
-                                <div className="w-2 h-2 bg-[#D4AF37] rounded-full mt-1.5 flex-shrink-0"></div>
-                              )}
                             </div>
-                          </div>
-                        ))}
-                      </div>
-                    )}
-                  </div>
-                </div>
-              )}
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  </motion.div>
+                )}
+              </AnimatePresence>
             </div>
           )}
-          
+
           <button 
             onClick={() => setLanguage(language === 'ar' ? 'en' : 'ar')}
-            className="p-2 text-gray-300 hover:text-white transition-colors hidden sm:flex items-center gap-1 font-bold"
+            className="p-2 text-gray-300 hover:text-white transition-colors flex items-center gap-1 font-bold"
           >
             <Globe size={20} />
             <span className="text-xs uppercase">{language === 'ar' ? 'EN' : 'AR'}</span>
@@ -335,7 +285,6 @@ export const Header = () => {
         </div>
       </div>
 
-      {/* Mobile Menu */}
       <AnimatePresence>
         {isMobileMenuOpen && (
           <motion.div 
@@ -364,21 +313,12 @@ export const Header = () => {
                     className="bg-transparent border-none outline-none text-sm text-white w-full placeholder-gray-500"
                   />
                 </form>
-                <button 
-                  onClick={() => {
-                    setLanguage(language === 'ar' ? 'en' : 'ar');
-                    setIsMobileMenuOpen(false);
-                  }}
-                  className="flex items-center justify-center gap-2 p-3 text-gray-300 hover:text-white bg-[#1C2E5A]/30 hover:bg-[#1C2E5A]/50 rounded-lg transition-colors border border-transparent hover:border-[#2A4075]"
-                >
-                  <Globe size={20} />
-                  <span className="font-bold uppercase">{language === 'ar' ? 'English' : 'العربية'}</span>
-                </button>
               </div>
             </nav>
           </motion.div>
         )}
       </AnimatePresence>
+      <AuthModal isOpen={isAuthModalOpen} onClose={() => setIsAuthModalOpen(false)} language={language as 'ar' | 'en'} />
     </header>
   );
 };

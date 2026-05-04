@@ -38,7 +38,7 @@ export const Footer = () => {
           <div className="lg:col-span-1">
             <div className="flex items-center gap-3 mb-6">
               <img 
-                src={settings.logoUrl || "https://i.postimg.cc/vTzC2Jbx/January-05-2026-1-removebg-preview.png"} 
+                src={settings.siteLogo || "https://i.postimg.cc/vTzC2Jbx/January-05-2026-1-removebg-preview.png"} 
                 alt="Logo" 
                 className="w-12 h-12 object-contain" 
                 referrerPolicy="no-referrer" 
@@ -53,24 +53,19 @@ export const Footer = () => {
               {language === 'ar' ? settings.descriptionAr : settings.descriptionEn}
             </p>
             <div className="flex items-center gap-4">
-              {settings.socialLinks.twitter && (
-                <a href={settings.socialLinks.twitter} className="w-10 h-10 rounded-full bg-[#121E3D] border border-[#1C2E5A] flex items-center justify-center text-gray-400 hover:text-[#D4AF37] hover:border-[#D4AF37] transition-all">
+              {settings.twitterUrl && (
+                <a href={settings.twitterUrl} className="w-10 h-10 rounded-full bg-[#121E3D] border border-[#1C2E5A] flex items-center justify-center text-gray-400 hover:text-[#D4AF37] hover:border-[#D4AF37] transition-all">
                   <Twitter size={18} />
                 </a>
               )}
-              {settings.socialLinks.linkedin && (
-                <a href={settings.socialLinks.linkedin} className="w-10 h-10 rounded-full bg-[#121E3D] border border-[#1C2E5A] flex items-center justify-center text-gray-400 hover:text-[#D4AF37] hover:border-[#D4AF37] transition-all">
+              {settings.linkedinUrl && (
+                <a href={settings.linkedinUrl} className="w-10 h-10 rounded-full bg-[#121E3D] border border-[#1C2E5A] flex items-center justify-center text-gray-400 hover:text-[#D4AF37] hover:border-[#D4AF37] transition-all">
                   <Linkedin size={18} />
                 </a>
               )}
-              {settings.socialLinks.facebook && (
-                <a href={settings.socialLinks.facebook} className="w-10 h-10 rounded-full bg-[#121E3D] border border-[#1C2E5A] flex items-center justify-center text-gray-400 hover:text-[#D4AF37] hover:border-[#D4AF37] transition-all">
+              {settings.facebookUrl && (
+                <a href={settings.facebookUrl} className="w-10 h-10 rounded-full bg-[#121E3D] border border-[#1C2E5A] flex items-center justify-center text-gray-400 hover:text-[#D4AF37] hover:border-[#D4AF37] transition-all">
                   <Facebook size={18} />
-                </a>
-              )}
-              {settings.socialLinks.instagram && (
-                <a href={settings.socialLinks.instagram} className="w-10 h-10 rounded-full bg-[#121E3D] border border-[#1C2E5A] flex items-center justify-center text-gray-400 hover:text-[#D4AF37] hover:border-[#D4AF37] transition-all">
-                  <Instagram size={18} />
                 </a>
               )}
             </div>
@@ -108,7 +103,7 @@ export const Footer = () => {
             <ul className="space-y-4">
               <li className="flex items-start gap-3">
                 <MapPin size={18} className="text-[#D4AF37] mt-1 flex-shrink-0" />
-                <span className="text-gray-400 text-sm">{language === 'ar' ? settings.addressAr : settings.addressEn}</span>
+                <span className="text-gray-400 text-sm">{language === 'ar' ? settings.contactAddressAr : settings.contactAddressEn}</span>
               </li>
               <li className="flex items-center gap-3">
                 <Phone size={18} className="text-[#D4AF37] flex-shrink-0" />

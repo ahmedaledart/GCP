@@ -3,8 +3,9 @@ import { useLanguage } from '../context/LanguageContext';
 import { FileText, ChevronDown, Download, AlertCircle, Clock, BookOpen } from 'lucide-react';
 import Markdown from 'react-markdown';
 import { motion, AnimatePresence } from 'motion/react';
-import { collection, query, where, orderBy, getDocs } from 'firebase/firestore';
-import { db } from '../firebase';
+import { 
+  db, collection, query, where, orderBy, getDocs 
+} from '../lib/api';
 
 export const Reports = () => {
   const { language } = useLanguage();

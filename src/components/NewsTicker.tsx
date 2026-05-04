@@ -1,15 +1,15 @@
 import React, { useEffect, useState } from 'react';
-import { collection, query, where, onSnapshot, orderBy } from 'firebase/firestore';
-import { db, handleFirestoreError, OperationType } from '../firebase';
+import { supabase } from '../lib/supabase';
 import { useLanguage } from '../context/LanguageContext';
 import { motion, AnimatePresence } from 'motion/react';
-import { Megaphone } from 'lucide-react';
+import { Megaphone, Zap } from 'lucide-react';
 
 interface NewsItem {
   id: string;
   text_ar: string;
   text_en: string;
   active: boolean;
+  is_breaking?: boolean;
   createdAt: any;
 }
 
@@ -18,64 +18,89 @@ export const NewsTicker = () => {
   const [news, setNews] = useState<NewsItem[]>([]);
 
   useEffect(() => {
-    const path = 'news_ticker';
-    const q = query(
-      collection(db, path),
-      where('active', '==', true),
-      orderBy('createdAt', 'desc')
-    );
+    let isMounted = true;
+    const fetchNews = async () => {
+      const { data, error } = await supabase
+        .from('news')
+        .select('*')
+        .eq('status', 'published')
+        .eq('is_visible', true)
+        .order('created_at', { ascending: false });
+        
+      if (!error && data && isMounted) {
+        setNews(data.map(n => ({
+          id: String(n.id),
+          text_ar: n.title_ar || n.content_ar,
+          text_en: n.title_en || n.content_en,
+          is_breaking: n.is_breaking,
+          active: true,
+          createdAt: n.created_at
+        })));
+      }
+    };
+    
+    fetchNews();
+    
+    const subscription = supabase
+      .channel('news-ticker-channel')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'news' }, () => {
+        fetchNews();
+      })
+      .subscribe();
 
-    const unsubscribe = onSnapshot(q, (snapshot) => {
-      const newsData = snapshot.docs.map(doc => ({
-        id: doc.id,
-        ...doc.data()
-      })) as NewsItem[];
-      setNews(newsData);
-    }, (error) => {
-      handleFirestoreError(error, OperationType.GET, path);
-    });
-
-    return () => unsubscribe();
+    return () => {
+      isMounted = false;
+      supabase.removeChannel(subscription);
+    };
   }, []);
 
   if (news.length === 0) return null;
 
-  // Duplicate news for seamless loop
-  const displayNews = [...news, ...news, ...news];
-
   return (
-    <div className="bg-[#1C2E5A] border-b border-[#D4AF37]/30 py-2 overflow-hidden relative flex items-center h-10">
-      <div className="bg-[#D4AF37] text-[#0A1128] px-4 py-1 rounded-l-full text-xs font-bold whitespace-nowrap z-30 flex items-center gap-2 shadow-lg ml-0 relative">
-        <Megaphone size={14} />
-        <span>{language === 'ar' ? 'أخبار حية' : 'LIVE NEWS'}</span>
+    <div className="bg-[#1C2E5A]/30 border-y border-[#1C2E5A] overflow-hidden py-2">
+      <div className="container mx-auto px-4 flex items-center">
+        <div className="flex items-center gap-2 bg-[#D4AF37] text-[#0A1128] px-3 py-1 rounded shadow-lg z-10 font-bold text-sm whitespace-nowrap">
+          <Megaphone size={16} />
+          {language === 'ar' ? 'آخر الأخبار' : 'Breaking'}
+        </div>
+        
+        <div className="flex-1 relative overflow-hidden h-6 ml-4 mr-4">
+          <div className="absolute inset-0 flex items-center">
+            <div className="marquee flex gap-12 whitespace-nowrap">
+              {news.map((item, idx) => (
+                <span key={`${item.id}-${idx}`} className={`text-sm transition-colors cursor-pointer flex items-center gap-2 ${item.is_breaking ? 'text-red-500 font-bold hover:text-red-400' : 'text-gray-300 hover:text-white'}`}>
+                  {item.is_breaking && <Zap size={14} className="text-red-500" />}
+                  {language === 'ar' ? item.text_ar : item.text_en}
+                </span>
+              ))}
+              {/* Duplicate for seamless loop if news is short */}
+              {news.length < 5 && news.map((item, idx) => (
+                <span key={`${item.id}-dup-${idx}`} className={`text-sm transition-colors cursor-pointer flex items-center gap-2 ${item.is_breaking ? 'text-red-500 font-bold hover:text-red-400' : 'text-gray-300 hover:text-white'}`}>
+                  {item.is_breaking && <Zap size={14} className="text-red-500" />}
+                  {language === 'ar' ? item.text_ar : item.text_en}
+                </span>
+              ))}
+            </div>
+          </div>
+        </div>
       </div>
       
-      <div className="flex-grow overflow-hidden relative h-full flex items-center">
-        <motion.div
-          className="flex items-center gap-12 whitespace-nowrap px-8"
-          animate={{
-            x: language === 'ar' ? [0, 1000] : [0, -1000],
-          }}
-          transition={{
-            duration: 30,
-            repeat: Infinity,
-            ease: "linear",
-          }}
-        >
-          {displayNews.map((item, idx) => (
-            <div key={`${item.id}-${idx}`} className="flex items-center gap-3">
-              <span className="w-2 h-2 rounded-full bg-[#D4AF37] shadow-[0_0_8px_rgba(212,175,55,0.6)]"></span>
-              <p className="text-white text-sm font-medium tracking-wide">
-                {language === 'ar' ? item.text_ar : item.text_en}
-              </p>
-            </div>
-          ))}
-        </motion.div>
-      </div>
-
-      {/* Gradient overlays for smooth fade edges */}
-      <div className="absolute right-0 top-0 bottom-0 w-20 bg-gradient-to-l from-[#1C2E5A] to-transparent z-20 pointer-events-none"></div>
-      <div className="absolute left-24 top-0 bottom-0 w-20 bg-gradient-to-r from-[#1C2E5A] to-transparent z-20 pointer-events-none"></div>
+      <style>{`
+        .marquee {
+          animation: marquee 30s linear infinite;
+        }
+        @keyframes marquee {
+          0% { transform: translateX(0); }
+          100% { transform: translateX(${language === 'ar' ? '100%' : '-100%'}); }
+        }
+        [dir="rtl"] .marquee {
+          animation: marquee-rtl 30s linear infinite;
+        }
+        @keyframes marquee-rtl {
+          0% { transform: translateX(0); }
+          100% { transform: translateX(100%); }
+        }
+      `}</style>
     </div>
   );
 };

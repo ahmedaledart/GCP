@@ -1,6 +1,8 @@
 import { useEffect } from 'react';
-import { db, OperationType, handleFirestoreError } from '../firebase';
-import { doc, updateDoc, increment, getDoc, setDoc } from 'firebase/firestore';
+import { 
+  db, OperationType, handleFirestoreError,
+  doc, updateDoc, increment, getDoc, setDoc 
+} from '../lib/api';
 
 export const VisitorTracker = () => {
   useEffect(() => {
@@ -15,10 +17,7 @@ export const VisitorTracker = () => {
         const statsDoc = await getDoc(statsRef);
         
         if (!statsDoc.exists()) {
-          // Initialize stats if it doesn't exist (this might fail due to rules, but admin can create it)
-          // Actually, rules allow create only for admin, so we should handle that.
-          // For now, assume it exists or admin will create it.
-          console.warn('Stats document does not exist. Visitor tracking skipped.');
+          // If the stats doc doesn't exist, we don't track but don't crash
           return;
         }
 
@@ -27,9 +26,18 @@ export const VisitorTracker = () => {
         });
         
         sessionStorage.setItem('visitor_tracked', 'true');
-      } catch (error) {
-        // Silently fail or log for debugging
-        console.error('Error tracking visitor:', error);
+      } catch (error: any) {
+        // Handle common firestore errors silently for visitors but log internally
+        if (error.code === 'unavailable' || error.message?.includes('offline')) {
+          console.warn('Visitor tracking skipped: Backend is offline');
+          return;
+        }
+        
+        try {
+          handleFirestoreError(error, OperationType.WRITE, 'stats/global');
+        } catch (e) {
+          console.error('Visitor tracking failed:', e);
+        }
       }
     };
 

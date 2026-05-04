@@ -6,7 +6,7 @@ import { useLanguage } from '../context/LanguageContext';
 import { PriceDisplay } from './PriceDisplay';
 
 export const TopCommodities = () => {
-  const { data, loading, error } = useMarketData();
+  const { data, loading, error, isMockData } = useMarketData();
   const { t, language } = useLanguage();
   
   if (loading) {
@@ -77,7 +77,7 @@ export const TopCommodities = () => {
                {t('topCommoditiesTitle')}
              </h2>
              <div className="flex items-center gap-2 mt-1">
-                {useMarketData().isMockData ? (
+                {isMockData ? (
                   <span className="bg-yellow-500/10 text-yellow-500 text-[10px] px-2 py-0.5 rounded border border-yellow-500/20 font-medium tracking-wider uppercase">
                     {language === 'ar' ? 'بيانات تجريبية لمعاينة الواجهة' : 'Mock Data Preview'}
                   </span>

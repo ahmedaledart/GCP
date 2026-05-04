@@ -2,8 +2,10 @@ import React, { useState } from 'react';
 import { Mail, MessageSquare, Send, User, CheckCircle, AlertCircle, Phone, MapPin, Globe, RefreshCw } from 'lucide-react';
 import { useLanguage } from '../context/LanguageContext';
 import { useSettings } from '../context/SettingsContext';
-import { collection, addDoc, serverTimestamp } from 'firebase/firestore';
-import { db, handleFirestoreError, OperationType, logUserActivity } from '../firebase';
+import { 
+  db, handleFirestoreError, OperationType, logUserActivity,
+  collection, addDoc, serverTimestamp 
+} from '../lib/api';
 import { motion } from 'motion/react';
 
 export const Contact = () => {
@@ -33,7 +35,6 @@ export const Contact = () => {
       setStatus('success');
       setFormData({ name: '', email: '', subject: '', message: '' });
     } catch (error) {
-      console.error('Error sending message:', error);
       handleFirestoreError(error, OperationType.CREATE, 'messages');
       setStatus('error');
     }
@@ -71,7 +72,7 @@ export const Contact = () => {
                 <div>
                   <h3 className="text-white font-bold mb-1">{language === 'ar' ? 'العنوان' : 'Address'}</h3>
                   <p className="text-gray-400 text-sm leading-relaxed">
-                    {language === 'ar' ? settings.addressAr : settings.addressEn}
+                    {language === 'ar' ? settings.contactAddressAr : settings.contactAddressEn}
                   </p>
                 </div>
               </div>

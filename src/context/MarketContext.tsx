@@ -1,6 +1,5 @@
 import React, { createContext, useContext, useEffect, useState } from 'react';
-import { collection, onSnapshot, query } from 'firebase/firestore';
-import { db, handleFirestoreError, OperationType } from '../firebase';
+import { supabase } from '../lib/supabase';
 import { Commodity, commoditiesData as mockData } from '../data/mockData';
 
 interface MarketContextType {
@@ -14,17 +13,17 @@ interface MarketContextType {
 }
 
 const MarketContext = createContext<MarketContextType>({ 
-  data: [], 
+  data: mockData, 
   connected: false,
   loading: true,
   error: null,
   lastUpdate: null,
   latency: null,
-  isMockData: false
+  isMockData: true
 });
 
 export const MarketProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
-  const [data, setData] = useState<Commodity[]>([]); // Start empty, handle loading gracefully
+  const [data, setData] = useState<Commodity[]>([]); 
   const [connected, setConnected] = useState(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -33,105 +32,111 @@ export const MarketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
   const [isMockData, setIsMockData] = useState(false);
 
   useEffect(() => {
-    const path = 'commodities';
-    const q = query(collection(db, path));
-    
-    let lastSnapshotTime = Date.now();
+    let subscription: ReturnType<typeof supabase.channel> | null = null;
+    let isMounted = true;
 
-    const unsubscribe = onSnapshot(q, (snapshot) => {
-      const now = Date.now();
-      const currentLatency = now - lastSnapshotTime;
-      setLatency(currentLatency > 0 && currentLatency < 5000 ? currentLatency : Math.floor(Math.random() * 100) + 50);
-      lastSnapshotTime = now;
-      setLoading(false);
-      setError(null);
+    const fetchCommodities = async () => {
+      try {
+        const fetchStart = Date.now();
+        const { data: commodities, error: supaError } = await supabase
+          .from('commodities')
+          .select('*')
+          .order('sector', { ascending: true }); // Make sure table is correctly ordered or mapped, we maps it later anyway
 
-      if (!snapshot.empty) {
-        setIsMockData(false);
-        const commodities = snapshot.docs.map(doc => {
-          const docData = doc.data();
+        if (supaError) {
+          throw supaError;
+        }
+
+        if (isMounted) {
+          setLatency(Date.now() - fetchStart);
+          setLoading(false);
+          setError(null);
           
-          let parsedCategory = docData.category || '';
-          if (!parsedCategory && docData.sectorEn) {
-            if (docData.sectorEn === 'Energy') parsedCategory = 'energy';
-            if (docData.sectorEn === 'Metals') parsedCategory = 'metals';
-            if (docData.sectorEn === 'Agriculture') parsedCategory = 'agriculture';
-            if (docData.sectorEn === 'Indices') parsedCategory = 'currencies';
+          if (commodities && commodities.length > 0) {
+            setIsMockData(false);
+            // Map Supabase fields to the application's expected Commodity fields
+            // Filter visible items
+            const mappedCommodities = commodities
+              .filter((c: any) => c.is_visible !== false)
+              .map((c: any) => ({
+                id: String(c.id),
+                nameAr: c.name_ar,
+                nameEn: c.name_en,
+                symbol: c.symbol,
+                sectorAr: c.sector, // If Supabase only has 'sector', mapping needs to be handled
+                sectorEn: c.sector === 'الطاقة' ? 'Energy' : c.sector === 'المعادن' ? 'Metals' : c.sector === 'السلع الزراعية' ? 'Agriculture' : c.sector === 'المؤشرات' ? 'Indices' : 'Energy',
+                price: c.price,
+                changePercent: c.change_percent,
+                trend: c.trend,
+                high: c.high,
+                low: c.low,
+                unitAr: c.unit || '',
+                unitEn: c.unit || '',
+                source: c.source,
+                createdAt: c.created_at,
+                updatedAt: c.updated_at,
+                isVisible: c.is_visible,
+                prevClose: c.previous_price,
+                changeAmount: c.change_value,
+                statusAr: c.status === 'active' ? 'مفتوح' : 'مغلق',
+                statusEn: c.status === 'active' ? 'Open' : 'Closed',
+                lastUpdate: c.updated_at || new Date().toISOString(),
+                history: []
+              })) as unknown as Commodity[];
+            
+            setData(mappedCommodities);
+            setConnected(true);
+            setLastUpdate(new Date());
+          } else {
+            setIsMockData(false);
+            setData([]); // Empty state
+            setConnected(true);
+            setLastUpdate(new Date());
           }
-          
-          let sectorAr = docData.sectorAr || parsedCategory || 'الطاقة';
-          let sectorEn = docData.sectorEn || parsedCategory || 'Energy';
-          
-          if (parsedCategory) {
-            switch(parsedCategory) {
-              case 'energy': sectorAr = 'الطاقة'; sectorEn = 'Energy'; break;
-              case 'metals': sectorAr = 'المعادن'; sectorEn = 'Metals'; break;
-              case 'agriculture': sectorAr = 'السلع الزراعية'; sectorEn = 'Agriculture'; break;
-              case 'currencies': sectorAr = 'المؤشرات'; sectorEn = 'Indices'; break;
-              default: sectorAr = parsedCategory; sectorEn = parsedCategory; break;
-            }
-          }
-
-          let lastUpdateFormatted = new Date().toISOString();
-          if (docData.lastUpdate) {
-             lastUpdateFormatted = typeof docData.lastUpdate === 'string' ? docData.lastUpdate : (docData.lastUpdate.toDate ? docData.lastUpdate.toDate().toISOString() : new Date().toISOString());
-          } else if (docData.lastUpdated) {
-             lastUpdateFormatted = typeof docData.lastUpdated === 'string' ? docData.lastUpdated : (docData.lastUpdated.toDate ? docData.lastUpdated.toDate().toISOString() : new Date().toISOString());
-          }
-
-          const changeAmountVal = docData.changeAmount || docData.change || 0;
-          let trendVal: "up" | "down" | "neutral" = "neutral";
-          if (changeAmountVal > 0) trendVal = "up";
-          if (changeAmountVal < 0) trendVal = "down";
-
-          return {
-            id: doc.id,
-            ...docData,
-            sectorAr,
-            sectorEn,
-            price: docData.price || 0,
-            prevClose: docData.prevClose || docData.price || 0,
-            changePercent: docData.changePercent || 0,
-            changeAmount: changeAmountVal,
-            high: docData.high || docData.price || 0,
-            low: docData.low || docData.price || 0,
-            unitAr: docData.unitAr || docData.unit || '',
-            unitEn: docData.unitEn || docData.unit || '',
-            currency: docData.currency,
-            trend: docData.trend || trendVal,
-            statusAr: docData.statusAr || 'مفتوح',
-            statusEn: docData.statusEn || 'Open',
-            lastUpdate: lastUpdateFormatted,
-            history: docData.history || []
-          };
-        }) as Commodity[];
-        const sortedCommodities = commodities.sort((a, b) => {
-          if (a.sectorEn !== b.sectorEn) {
-            return a.sectorEn.localeCompare(b.sectorEn);
-          }
-          return (a.symbol || '').localeCompare(b.symbol || '');
-        });
-        
-        setData(sortedCommodities);
-        setConnected(true);
-        setLastUpdate(new Date());
-      } else {
-        // Fallback to mock data if empty
-        setIsMockData(true);
-        setData(mockData);
-        setConnected(true);
-        setLastUpdate(new Date());
+        }
+      } catch (err: any) {
+        if (isMounted) {
+          console.error('Supabase fetch error:', err);
+          setLoading(false);
+          setError(err.message || 'فشل الاتصال بـ Supabase.');
+          setConnected(false);
+          setIsMockData(true);
+          setData(mockData);
+        }
       }
-    }, (err) => {
-      setLoading(false);
-      setError(err.message || 'فشل الاتصال بخوادم البيانات.');
-      setConnected(false);
-      setIsMockData(true);
-      setData(mockData); // Provide fallback data even on error
-      handleFirestoreError(err, OperationType.GET, path);
-    });
+    };
 
-    return () => unsubscribe();
+    fetchCommodities();
+
+    // Subscribe to realtime updates
+    subscription = supabase
+      .channel('custom-all-channel')
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'commodities' },
+        (payload) => {
+          setLatency(Math.floor(Math.random() * 50) + 10); // Simulated low latency for websockets
+          fetchCommodities(); // Re-fetch on any change to ensure order and full data
+        }
+      )
+      .subscribe((status) => {
+        if (status === 'SUBSCRIBED') {
+          if (isMounted) setConnected(true);
+        } else if (status === 'CHANNEL_ERROR') {
+          if (isMounted) {
+            setConnected(false);
+            setIsMockData(true);
+            setError('Realtime channel error');
+          }
+        }
+      });
+
+    return () => {
+      isMounted = false;
+      if (subscription) {
+        supabase.removeChannel(subscription);
+      }
+    };
   }, []);
 
   return (

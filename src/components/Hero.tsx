@@ -30,7 +30,7 @@ export const Hero = () => {
 
           <div className="flex flex-col items-center justify-center mb-8">
             <img 
-              src={settings.logoUrl || "https://i.postimg.cc/vTzC2Jbx/January-05-2026-1-removebg-preview.png"} 
+              src={settings.siteLogo || "https://i.postimg.cc/vTzC2Jbx/January-05-2026-1-removebg-preview.png"} 
               alt="Logo" 
               className="w-48 h-48 object-contain animate-pulse drop-shadow-[0_0_15px_rgba(212,175,55,0.5)]" 
               referrerPolicy="no-referrer" 

@@ -10,12 +10,12 @@ const MAX_RETRIES = 3;
 export const generateWithRetry = async (
   apiKey: string,
   prompt: string,
-  options: { model?: string; search?: boolean } = {}
+  options: { model?: string; search?: boolean; json?: boolean; schema?: any } = {}
 ) => {
   const models = [
-    options.model || 'gemini-3-flash-preview',
+    options.model || 'gemini-3.1-flash-preview',
     'gemini-3.1-pro-preview',
-    'gemini-3.1-flash-lite-preview'
+    'gemini-3-flash-preview'
   ];
 
   const ai = new GoogleGenAI({ apiKey });
@@ -23,10 +23,22 @@ export const generateWithRetry = async (
   for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
     for (const modelName of models) {
       try {
+        const config: any = {};
+        if (options.search) {
+          config.tools = [{ googleSearch: {} }];
+        }
+        if (options.json) {
+          config.responseMimeType = "application/json";
+        }
+        if (options.schema) {
+          config.responseMimeType = "application/json";
+          config.responseSchema = options.schema;
+        }
+        
         const model = ai.models.generateContent({
           model: modelName,
           contents: prompt,
-          config: options.search ? { tools: [{ googleSearch: {} }] } : undefined
+          config: Object.keys(config).length > 0 ? config : undefined
         });
 
         const response = await model;

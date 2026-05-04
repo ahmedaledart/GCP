@@ -1,2256 +1,1772 @@
 import React, { useState, useEffect } from 'react';
-import { collection, addDoc, onSnapshot, query, orderBy, deleteDoc, doc, updateDoc, serverTimestamp, setDoc, getDoc } from 'firebase/firestore';
-import { db, auth, handleFirestoreError, OperationType, signInWithPopup, googleProvider } from '../firebase';
-import { useLanguage } from '../context/LanguageContext';
 import { 
   Plus, Trash2, Save, ToggleLeft, ToggleRight, Shield, 
   LayoutDashboard, TrendingUp, Newspaper, Settings, 
-  History, LogOut, ChevronRight, Globe, Image as ImageIcon,
+  History, LogOut, ChevronRight, ChevronLeft, ExternalLink, Globe, Image as ImageIcon,
   FileText, FileSpreadsheet, Users, Database, Download, Upload, RefreshCw,
-  Bell, Search, Menu, X, MessageSquare, User, Zap, Mail, BarChart3, AlertCircle
+  Bell, Search, Menu, X, MessageSquare, User, Zap, Mail, BarChart3, AlertCircle, Lock,
+  ChevronDown, Filter, Calendar, Activity, PieChart as PieChartIcon, ShieldAlert,
+  Briefcase, Network, Coins, FileBarChart, BarChart2, AlertTriangle, Layout, Scale, DatabaseBackup
 } from 'lucide-react';
-import { onAuthStateChanged, signOut } from 'firebase/auth';
 import { useNavigate } from 'react-router-dom';
 import { motion, AnimatePresence } from 'motion/react';
+import * as XLSX from 'xlsx';
+import { 
+  BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
+  PieChart, Pie, Cell, AreaChart, Area, Legend
+} from 'recharts';
 import { generateWithRetry } from '../services/geminiService';
+import { 
+  db, auth, handleFirestoreError, OperationType, signInWithPopup, 
+  googleProvider, logUserActivity, signOut, onAuthStateChanged, 
+  signInWithEmailAndPassword, collection, onSnapshot, query, orderBy, 
+  deleteDoc, doc, updateDoc, serverTimestamp, setDoc, getDoc, addDoc, getDocFromServer, getDocs 
+} from '../lib/api';
+import { supabase } from '../lib/supabase';
+import { useLanguage } from '../context/LanguageContext';
+import { SectorsTab, DataSourcesTab, ExchangeRatesTab, UsersTab, LegalTab, BackupTab, ChartsTab, AlertsTab, InterfaceTab } from '../components/admin/AdditionalTabs';
+import { AdminUsersTab } from '../components/admin/AdminUsersTab';
 
-const safeFormatDate = (ts: any, type: 'date' | 'time' | 'both' = 'both') => {
-  try {
-    if (!ts?.toDate) return '';
-    const d = ts.toDate();
-    if (isNaN(d.getTime())) return '';
-    if (type === 'both') return d.toLocaleString();
-    if (type === 'date') return d.toLocaleDateString();
-    return d.toLocaleTimeString();
-  } catch {
-    return '';
-  }
-};
-
-// --- Types ---
-interface NewsItem {
-  id: string;
-  text_ar: string;
-  text_en: string;
-  active: boolean;
-  createdAt: any;
-}
-
-interface Commodity {
-  id: string;
-  symbol: string;
-  nameAr: string;
-  nameEn: string;
-  category: string;
-  price: number;
-  change: number;
-  changePercent: number;
-  unit: string;
-  currency?: string;
-  lastUpdated: any;
-}
-
-interface Report {
-  id: string;
-  titleAr: string;
-  titleEn: string;
-  contentAr: string;
-  contentEn: string;
-  status: 'draft' | 'published';
-  topic: string;
-  author: string;
-  publishedAt?: any;
-  createdAt: any;
-}
-
-interface SiteSettings {
-  siteNameAr: string;
-  siteNameEn: string;
-  descriptionAr: string;
-  descriptionEn: string;
-  logoUrl: string;
-  contactEmail: string;
-  contactPhone: string;
-  addressAr: string;
-  addressEn: string;
-  socialLinks: {
-    facebook: string;
-    twitter: string;
-    linkedin: string;
-    instagram: string;
-  };
-  adminPath: string;
-  sectorApis: {
-    commodities: string;
-    metals: string;
-    energy: string;
-    agriculture: string;
-  };
-  isSiteActive?: boolean;
-  geminiApiKey?: string;
-}
-
-type AdminTab = 'overview' | 'market' | 'news_ticker' | 'reports' | 'content' | 'settings' | 'logs' | 'messages' | 'admins';
+const ADMIN_EMAIL = "ahmedhmeda67@gmail.com";
 
 export const Admin = () => {
   const { t, language } = useLanguage();
   const navigate = useNavigate();
-  
-  // --- State ---
-  const [activeTab, setActiveTab] = useState<AdminTab>('overview');
+  const [user, setUser] = useState<any>(null);
   const [isAdmin, setIsAdmin] = useState(false);
-  const [isSuperAdmin, setIsSuperAdmin] = useState(false);
-  const [adminPermissions, setAdminPermissions] = useState<string[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [isSidebarOpen, setIsSidebarOpen] = useState(true);
-  
-  // Data State
-  const [news, setNews] = useState<NewsItem[]>([]);
-  const [commodities, setCommodities] = useState<Commodity[]>([]);
-  const [settings, setSettings] = useState<SiteSettings | null>(null);
-  const [logs, setLogs] = useState<any[]>([]);
-  const [messages, setMessages] = useState<any[]>([]);
-  const [stats, setStats] = useState<any>(null);
-  const [adminsList, setAdminsList] = useState<any[]>([]);
-  const [reports, setReports] = useState<Report[]>([]);
-  
-  const ADMIN_EMAIL = "ahmedhmeda67@gmail.com";
+  const [activeTab, setActiveTab] = useState('dashboard');
+  const [isLoggingIn, setIsLoggingIn] = useState(false);
+  const [loginError, setLoginError] = useState<string | null>(null);
+  const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
 
-  // --- Auth Check ---
+  // Stats State
+  const [stats, setStats] = useState({
+    totalVisitors: 0,
+    totalCommodities: 0,
+    totalNews: 0,
+    totalReports: 0,
+    totalMessages: 0
+  });
+
+  // Data States
+  const [commodities, setCommodities] = useState<any[]>([]);
+  const [news, setNews] = useState<any[]>([]);
+  const [reports, setReports] = useState<any[]>([]);
+  const [messages, setMessages] = useState<any[]>([]);
+  const [logs, setLogs] = useState<any[]>([]);
+  const [sectors, setSectors] = useState<any[]>([]);
+  const [siteSettings, setSiteSettings] = useState<any>(null);
+
+  // Form States
+  const [editingItem, setEditingItem] = useState<any>(null);
+  const [commoditySearch, setCommoditySearch] = useState('');
+  const [logSearch, setLogSearch] = useState('');
+  const [sectorFilter, setSectorFilter] = useState('all');
+  const [importFeedback, setImportFeedback] = useState<{message: string; errors: string[]} | null>(null);
+  
+  const [statusFilter, setStatusFilter] = useState('all');
+
+  // Import Modal State
+  const [showImportModal, setShowImportModal] = useState(false);
+  const [importConfig, setImportConfig] = useState({
+    file: null as File | null,
+    sectorAr: '',
+    sectorEn: '',
+    currency: 'USD'
+  });
+
+  const [adminUser, setAdminUser] = useState<any>(null);
+
   useEffect(() => {
-    const unsubscribe = onAuthStateChanged(auth, async (user) => {
-      if (user && user.email) {
-        if (user.email === ADMIN_EMAIL) {
-          setIsAdmin(true);
-          setIsSuperAdmin(true);
-          setAdminPermissions(['manage_news', 'manage_commodities', 'manage_settings', 'manage_messages']);
-          setLoading(false);
-        } else {
-          try {
-            const adminDoc = await getDoc(doc(db, 'admins', user.email));
-            if (adminDoc.exists()) {
-              setIsAdmin(true);
-              setIsSuperAdmin(false);
-              setAdminPermissions(adminDoc.data().permissions || []);
-            } else {
-              setIsAdmin(false);
-              setIsSuperAdmin(false);
-              setAdminPermissions([]);
-            }
-          } catch (error) {
-            console.error("Error checking admin status:", error);
-            setIsAdmin(false);
-            setIsSuperAdmin(false);
-            setAdminPermissions([]);
+    const unsubscribe = onAuthStateChanged(auth, async (currentUser) => {
+      setUser(currentUser);
+      if (currentUser && currentUser.email) {
+        // Fallback for primary admin to guarantee access
+        if (currentUser.email === ADMIN_EMAIL) {
+          const { data, error } = await supabase.from('admin_users').select('*').eq('email', currentUser.email).single();
+          if (error && error.code === 'PGRST116') {
+             await supabase.from('admin_users').insert([{ email: currentUser.email, role: 'super_admin', is_active: true}]);
           }
-          setLoading(false);
+        }
+        
+        const { data } = await supabase
+          .from('admin_users')
+          .select('*')
+          .eq('email', currentUser.email)
+          .eq('is_active', true)
+          .single();
+          
+        if (data) {
+          setIsAdmin(true);
+          setAdminUser(data);
+        } else {
+          setIsAdmin(false);
+          setAdminUser(null);
         }
       } else {
         setIsAdmin(false);
-        setIsSuperAdmin(false);
-        setAdminPermissions([]);
-        setLoading(false);
+        setAdminUser(null);
       }
     });
     return () => unsubscribe();
   }, []);
 
   useEffect(() => {
-    if (isAdmin && !isSuperAdmin && adminPermissions && adminPermissions.length > 0) {
-      if (!adminPermissions.includes('view_dashboard')) {
-        const fallbackTabs: Record<string, AdminTab> = {
-          'manage_commodities': 'market',
-          'manage_news': 'news_ticker',
-          'manage_content': 'content',
-          'manage_settings': 'settings',
-          'manage_messages': 'messages'
-        };
-        for (const [perm, tab] of Object.entries(fallbackTabs)) {
-          if (adminPermissions.includes(perm)) {
-            setActiveTab(tab);
-            break;
-          }
-        }
-      }
-    }
-  }, [isAdmin, isSuperAdmin, adminPermissions]);
-
-  // --- Data Fetching ---
-  useEffect(() => {
     if (!isAdmin) return;
 
-    // News Ticker
-    const newsUnsubscribe = onSnapshot(
-      query(collection(db, 'news_ticker'), orderBy('createdAt', 'desc')),
-      (snapshot) => {
-        setNews(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })) as NewsItem[]);
-      },
-      (err) => handleFirestoreError(err, OperationType.GET, 'news_ticker')
-    );
+    // Listen to Stats
+    const unsubStats = onSnapshot(doc(db, 'stats', 'global'), (doc) => {
+      if (doc.exists()) setStats(prev => ({ ...prev, ...doc.data() }));
+    });
 
-    // Commodities
-    const commoditiesUnsubscribe = onSnapshot(
-      collection(db, 'commodities'),
-      (snapshot) => {
-        const mapped = snapshot.docs.map(doc => {
-          const docData = doc.data();
-          let parsedCategory = docData.category || '';
-          if (!parsedCategory && docData.sectorEn) {
-            if (docData.sectorEn === 'Energy') parsedCategory = 'energy';
-            if (docData.sectorEn === 'Metals') parsedCategory = 'metals';
-            if (docData.sectorEn === 'Agriculture') parsedCategory = 'agriculture';
-            if (docData.sectorEn === 'Indices') parsedCategory = 'currencies';
-          }
-          let sectorDisplay = docData.sectorAr || docData.category;
-          if (parsedCategory === 'energy') sectorDisplay = 'طاقة';
-          if (parsedCategory === 'metals') sectorDisplay = 'معادن';
-          if (parsedCategory === 'agriculture') sectorDisplay = 'زراعة';
-          if (parsedCategory === 'currencies') sectorDisplay = 'عملات';
+    // Listen to Commodities via Supabase
+    const fetchAdminCommodities = async () => {
+      const { data } = await supabase.from('commodities').select('*').order('created_at', { ascending: false });
+      if (data) {
+        setCommodities(data.map(c => ({
+          id: String(c.id),
+          nameAr: c.name_ar,
+          nameEn: c.name_en,
+          symbol: c.symbol,
+          sectorAr: c.sector,
+          sectorEn: c.sector,
+          price: c.price,
+          changePercent: c.change_percent,
+          trend: c.trend,
+          high: c.high,
+          low: c.low,
+          unit: c.unit,
+          source: c.source,
+          createdAt: c.created_at,
+          updatedAt: c.updated_at,
+          isVisible: c.is_visible,
+          previousPrice: c.previous_price,
+          changeValue: c.change_value,
+          status: c.status
+        })));
+      }
+    };
+    fetchAdminCommodities();
+    
+    const commoditiesSubscription = supabase
+      .channel('admin-commodities-channel')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'commodities' }, () => {
+        fetchAdminCommodities();
+      })
+      .subscribe();
 
-          return { 
-            id: doc.id, 
-            ...docData, 
-            category: parsedCategory,
-            sectorDisplay,
-            high: docData.high || docData.price || 0,
-            low: docData.low || docData.price || 0,
-            change: docData.change || 0,
-            changePercent: docData.changePercent || 0,
-            trend: docData.trend || (docData.change >= 0 ? 'up' : 'down')
-          };
-        }) as any[];
-        
-        // Sort items by sector then by symbol
-        mapped.sort((a, b) => {
-          if (a.sectorDisplay !== b.sectorDisplay) {
-            return (a.sectorDisplay || '').localeCompare(b.sectorDisplay || '');
-          }
-          return (a.symbol || '').localeCompare(b.symbol || '');
-        });
+    // Listen to News via Supabase
+    const fetchAdminNews = async () => {
+      const { data } = await supabase.from('news').select('*').order('created_at', { ascending: false });
+      if (data) {
+        setNews(data.map(n => ({
+          id: String(n.id),
+          text_ar: n.content_ar || n.title_ar,     // handle both title and content if mapped differently
+          text_en: n.content_en || n.title_en,
+          category: n.category,
+          is_breaking: n.is_breaking,
+          active: n.status === 'published' && n.is_visible !== false,
+          createdAt: n.created_at,
+          ...n
+        })));
+      }
+    };
+    fetchAdminNews();
+    
+    const newsSubscription = supabase
+      .channel('admin-news-channel')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'news' }, () => {
+        fetchAdminNews();
+      })
+      .subscribe();
 
-        setCommodities(mapped);
-      },
-      (err) => handleFirestoreError(err, OperationType.GET, 'commodities')
-    );
+    // Listen to Reports
+    const unsubReports = onSnapshot(query(collection(db, 'reports'), orderBy('publishedAt', 'desc')), (snap) => {
+      setReports(snap.docs.map(d => ({ id: d.id, ...d.data() })));
+    });
 
-    // Settings
-    const settingsUnsubscribe = onSnapshot(
-      doc(db, 'settings', 'global'),
-      (snapshot) => {
-        if (snapshot.exists()) {
-          setSettings(snapshot.data() as SiteSettings);
+    // Listen to Messages
+    const unsubMessages = onSnapshot(query(collection(db, 'messages'), orderBy('createdAt', 'desc')), (snap) => {
+      setMessages(snap.docs.map(d => ({ id: d.id, ...d.data() })));
+    });
+
+    // Listen to Logs
+    const unsubLogs = onSnapshot(query(collection(db, 'activity_logs'), orderBy('timestamp', 'desc')), (snap) => {
+      setLogs(snap.docs.map(d => ({ id: d.id, ...d.data() })));
+    });
+
+    // Listen to Sectors
+    const unsubSectors = onSnapshot(collection(db, 'sectors'), (snap) => {
+      setSectors(snap.docs.map(d => ({ id: d.id, ...d.data() })));
+    });
+
+    // Fetch Settings Once
+    const fetchSettings = async () => {
+      try {
+        const settingsDoc = await getDocFromServer(doc(db, 'settings', 'global'));
+        if (settingsDoc.exists()) {
+          setSiteSettings(settingsDoc.data());
         }
-      },
-      (err) => handleFirestoreError(err, OperationType.GET, 'settings/global')
-    );
-
-    // Logs
-    const logsUnsubscribe = onSnapshot(
-      query(collection(db, 'logs'), orderBy('timestamp', 'desc')),
-      (snapshot) => {
-        setLogs(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })));
-      },
-      (err) => handleFirestoreError(err, OperationType.GET, 'logs')
-    );
-
-    // Messages
-    const messagesUnsubscribe = onSnapshot(
-      query(collection(db, 'messages'), orderBy('createdAt', 'desc')),
-      (snapshot) => {
-        setMessages(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })));
-      },
-      (err) => handleFirestoreError(err, OperationType.GET, 'messages')
-    );
-
-    // Admins
-    const adminsUnsubscribe = onSnapshot(
-      query(collection(db, 'admins'), orderBy('createdAt', 'desc')),
-      (snapshot) => {
-        setAdminsList(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })));
-      },
-      (err) => handleFirestoreError(err, OperationType.GET, 'admins')
-    );
-
-    // Reports
-    const reportsUnsubscribe = onSnapshot(
-      query(collection(db, 'reports'), orderBy('createdAt', 'desc')),
-      (snapshot) => {
-        setReports(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })) as Report[]);
-      },
-      (err) => handleFirestoreError(err, OperationType.GET, 'reports')
-    );
-
-    // Stats
-    const statsUnsubscribe = onSnapshot(
-      doc(db, 'stats', 'global'),
-      (snapshot) => {
-        if (snapshot.exists()) {
-          setStats(snapshot.data());
-        }
-      },
-      (err) => handleFirestoreError(err, OperationType.GET, 'stats/global')
-    );
+      } catch (e) {
+        console.error(e);
+      }
+    };
+    fetchSettings();
 
     return () => {
-      newsUnsubscribe();
-      commoditiesUnsubscribe();
-      settingsUnsubscribe();
-      logsUnsubscribe();
-      messagesUnsubscribe();
-      statsUnsubscribe();
+      unsubStats();
+      if (commoditiesSubscription) supabase.removeChannel(commoditiesSubscription);
+      if (newsSubscription) supabase.removeChannel(newsSubscription);
+      unsubReports();
+      unsubMessages();
+      unsubLogs();
+      unsubSectors();
     };
   }, [isAdmin]);
 
-  // --- Actions ---
-  const logAction = async (action: string, details: string) => {
+  const handleGoogleLogin = async () => {
     try {
-      const user = auth.currentUser;
-      await addDoc(collection(db, 'logs'), {
-        adminEmail: user?.email,
-        action,
-        details,
-        timestamp: serverTimestamp(),
-        type: user?.email === 'ahmedhmeda67@gmail.com' ? 'super_admin' : 'admin'
-      });
-    } catch (e) {
-      console.error("Failed to log action", e);
+      setIsLoggingIn(true);
+      setLoginError(null);
+      const result = await signInWithPopup(auth, googleProvider);
+      
+      const { data } = await supabase
+        .from('admin_users')
+        .select('*')
+        .eq('email', result.user.email)
+        .eq('is_active', true)
+        .single();
+        
+      if (!data && result.user.email !== ADMIN_EMAIL) {
+        setLoginError(t('noAdminAccess'));
+        await signOut(auth);
+      }
+    } catch (error: any) {
+      setLoginError(error.message);
+    } finally {
+      setIsLoggingIn(false);
     }
   };
 
   const handleLogout = async () => {
-    await signOut(auth);
-    navigate('/');
-  };
-
-  const initializeStats = async () => {
     try {
-      await setDoc(doc(db, 'stats', 'global'), {
-        totalVisitors: 0,
-        lastReset: serverTimestamp()
-      });
-      await logAction('تهيئة الإحصائيات', 'تم تهيئة عداد الزوار بنجاح');
-      alert('تم تهيئة الإحصائيات بنجاح');
+      await signOut(auth);
+      navigate('/');
     } catch (e) {
-      handleFirestoreError(e, OperationType.WRITE, 'stats/global');
+      console.error(e);
     }
   };
 
-  const resetStats = async () => {
-    if (!window.confirm('هل أنت متأكد من إعادة تعيين عداد الزوار؟')) return;
-    try {
-      await updateDoc(doc(db, 'stats', 'global'), {
-        totalVisitors: 0,
-        lastReset: serverTimestamp()
-      });
-      await logAction('إعادة تعيين الإحصائيات', 'تم إعادة تعيين عداد الزوار');
-      alert('تم إعادة تعيين العداد بنجاح');
-    } catch (e) {
-      handleFirestoreError(e, OperationType.UPDATE, 'stats/global');
-    }
-  };
-
-  const handleDownload = (data: any[], filename: string) => {
-    if (!data || data.length === 0) return;
-    const headers = Object.keys(data[0]).join(',');
-    const rows = data.map(obj => 
-      Object.values(obj).map(val => {
-        if (val && typeof val === 'object' && val !== null && 'toDate' in val) {
-          return `"${safeFormatDate(val)}"`;
-        }
-        return typeof val === 'string' ? `"${val.replace(/"/g, '""')}"` : val;
-      }).join(',')
-    ).join('\n');
-    const csvContent = `data:text/csv;charset=utf-8,${headers}\n${rows}`;
-    const encodedUri = encodeURI(csvContent);
-    const link = document.createElement("a");
-    link.setAttribute("href", encodedUri);
-    link.setAttribute("download", `${filename}.csv`);
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
-    logAction('تصدير بيانات', `قام المسؤول بتصدير البيانات: ${filename}`);
-  };
-
-  // --- Render Helpers ---
-  const SidebarItem = ({ id, icon: Icon, label }: { id: AdminTab, icon: any, label: string }) => (
-    <button
-      onClick={() => setActiveTab(id)}
-      className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl transition-all ${
-        activeTab === id 
-          ? 'bg-[#D4AF37] text-[#0A1128] font-bold shadow-lg shadow-[#D4AF37]/20' 
-          : 'text-gray-400 hover:bg-[#1C2E5A] hover:text-white'
-      }`}
-    >
-      <Icon size={20} />
-      <span className={`${!isSidebarOpen && 'hidden'} whitespace-nowrap`}>{label}</span>
-      {activeTab === id && isSidebarOpen && <ChevronRight size={16} className="ml-auto" />}
-    </button>
-  );
-
-  if (loading) return (
-    <div className="min-h-screen bg-[#050A18] flex items-center justify-center">
-      <RefreshCw className="text-[#D4AF37] animate-spin" size={40} />
-    </div>
-  );
-  
-  if (!isAdmin) return (
-    <div className="min-h-screen bg-[#050A18] flex flex-col items-center justify-center p-4">
-      <div className="bg-[#121E3D] border border-[#1C2E5A] p-8 rounded-2xl max-w-md w-full text-center">
-        <Shield className="text-[#D4AF37] mx-auto mb-6" size={64} />
-        <h1 className="text-2xl font-bold text-white mb-4">لوحة الإدارة السرية</h1>
-        <p className="text-gray-400 mb-8">يجب تسجيل الدخول باستخدام حساب المسؤول للوصول إلى هذه اللوحة.</p>
-        <button 
-          onClick={async () => {
-            try {
-              await signInWithPopup(auth, googleProvider);
-            } catch (error: any) {
-              if (error?.code === 'auth/popup-closed-by-user') {
-                console.log("Sign-in popup closed by the user.");
-              } else {
-                console.error("Error signing in with Google", error);
-              }
-            }
-          }}
-          className="w-full bg-[#D4AF37] text-[#0A1128] font-bold py-3 rounded-xl hover:bg-[#B5952F] transition-all flex items-center justify-center gap-2"
-        >
-          <Globe size={20} /> تسجيل الدخول كمسؤول
-        </button>
-        <button 
-          onClick={() => navigate('/')}
-          className="mt-4 text-gray-500 hover:text-white text-sm transition-colors"
-        >
-          العودة للموقع الرئيسي
-        </button>
-      </div>
-    </div>
-  );
-
-  return (
-    <div className="min-h-screen bg-[#050A18] flex text-right" dir={language === 'ar' ? 'rtl' : 'ltr'}>
-      {/* Sidebar */}
-      <motion.aside 
-        initial={false}
-        animate={{ width: isSidebarOpen ? 256 : 80 }}
-        className="bg-[#0A1128] border-l border-[#1C2E5A] flex flex-col z-50 sticky top-0 h-screen"
-      >
-        <div className="p-6 flex items-center justify-between">
-          <AnimatePresence mode="wait">
-            {isSidebarOpen && (
-              <motion.div 
-                initial={{ opacity: 0 }}
-                animate={{ opacity: 1 }}
-                exit={{ opacity: 0 }}
-                className="flex items-center gap-2"
-              >
-                <Shield className="text-[#D4AF37]" size={24} />
-                <span className="text-white font-bold text-lg">لوحة الإدارة</span>
-              </motion.div>
-            )}
-          </AnimatePresence>
-          <button 
-            onClick={() => setIsSidebarOpen(!isSidebarOpen)}
-            className="p-2 text-gray-400 hover:text-white hover:bg-[#1C2E5A] rounded-lg transition-colors"
-          >
-            {isSidebarOpen ? <X size={20} /> : <Menu size={20} />}
-          </button>
-        </div>
-
-        <nav className="flex-grow px-3 space-y-2 overflow-y-auto">
-          {(isSuperAdmin || adminPermissions?.includes('view_dashboard')) && <SidebarItem id="overview" icon={LayoutDashboard} label="نظرة عامة" />}
-          {(isSuperAdmin || adminPermissions?.includes('manage_commodities')) && <SidebarItem id="market" icon={TrendingUp} label="بيانات السوق" />}
-          {(isSuperAdmin || adminPermissions?.includes('manage_news')) && <SidebarItem id="news_ticker" icon={Bell} label="شريط الأخبار" />}
-          {(isSuperAdmin || adminPermissions?.includes('manage_content')) && <SidebarItem id="reports" icon={FileSpreadsheet} label="إدارة التقارير الذكية" />}
-          {(isSuperAdmin || adminPermissions?.includes('manage_content')) && <SidebarItem id="content" icon={FileText} label="المحتوى والصفحات" />}
-          {(isSuperAdmin || adminPermissions?.includes('manage_settings')) && <SidebarItem id="settings" icon={Settings} label="الإعدادات العامة" />}
-          {(isSuperAdmin || adminPermissions?.includes('manage_messages')) && <SidebarItem id="messages" icon={MessageSquare} label="الرسائل والطلبات" />}
-          {isSuperAdmin && <SidebarItem id="admins" icon={Users} label="المدراء" />}
-          {isSuperAdmin && <SidebarItem id="logs" icon={History} label="سجل العمليات" />}
-        </nav>
-
-        <div className="p-4 border-t border-[#1C2E5A]">
-          <button 
-            onClick={handleLogout}
-            className="w-full flex items-center gap-3 px-4 py-3 text-red-500 hover:bg-red-500/10 rounded-xl transition-all group"
-          >
-            <LogOut size={20} className="group-hover:scale-110 transition-transform" />
-            <span className={`${!isSidebarOpen && 'hidden'}`}>تسجيل الخروج</span>
-          </button>
-        </div>
-      </motion.aside>
-
-      {/* Main Content */}
-      <main className="flex-grow overflow-y-auto p-8 bg-[#050A18]">
-        <header className="flex items-center justify-between mb-12">
-          <motion.div
-            initial={{ opacity: 0, x: 20 }}
-            animate={{ opacity: 1, x: 0 }}
-          >
-            <h1 className="text-3xl font-black text-white tracking-tight">
-              {activeTab === 'overview' && 'لوحة التحكم الرئيسية'}
-              {activeTab === 'market' && 'إدارة بيانات السوق'}
-              {activeTab === 'news_ticker' && 'إدارة شريط الأخبار'}
-              {activeTab === 'reports' && 'إدارة التقارير التحليلية'}
-              {activeTab === 'content' && 'إدارة المحتوى'}
-              {activeTab === 'settings' && 'إعدادات المنصة'}
-              {activeTab === 'messages' && 'الرسائل والطلبات'}
-              {activeTab === 'admins' && 'إدارة المدراء'}
-              {activeTab === 'logs' && 'سجل النشاط'}
-            </h1>
-            <p className="text-gray-400 text-sm mt-2 font-light">مرحباً بك في نظام الإدارة الشامل والمتكامل</p>
-          </motion.div>
-          
-          <motion.div 
-            initial={{ opacity: 0, scale: 0.9 }}
-            animate={{ opacity: 1, scale: 1 }}
-            className="flex items-center gap-4"
-          >
-            <div className="bg-[#121E3D] border border-[#1C2E5A] rounded-2xl px-5 py-3 flex items-center gap-4 shadow-xl">
-              <div className="text-right">
-                <div className="text-white text-sm font-bold">{auth.currentUser?.displayName || 'المسؤول'}</div>
-                <div className="text-gray-500 text-xs">{auth.currentUser?.email}</div>
-              </div>
-              <div className="w-12 h-12 rounded-2xl bg-gradient-to-br from-[#D4AF37] to-[#B5952F] flex items-center justify-center text-[#0A1128] font-black text-xl shadow-lg shadow-[#D4AF37]/20">
-                {auth.currentUser?.email?.charAt(0).toUpperCase()}
-              </div>
-            </div>
-          </motion.div>
-        </header>
-
-        <AnimatePresence mode="wait">
-          <motion.div
-            key={activeTab}
-            initial={{ opacity: 0, y: 20 }}
-            animate={{ opacity: 1, y: 0 }}
-            exit={{ opacity: 0, y: -20 }}
-            transition={{ duration: 0.3, ease: "easeOut" }}
-            className="pb-20"
-          >
-            {activeTab === 'overview' && (
-              <OverviewSection 
-                newsCount={news.length} 
-                commoditiesCount={commodities.length} 
-                logs={logs} 
-                stats={stats}
-                messagesCount={messages.filter(m => !m.read).length}
-                onInitializeStats={initializeStats}
-                onResetStats={resetStats}
-                setActiveTab={setActiveTab}
-                isSuperAdmin={isSuperAdmin}
-                adminPermissions={adminPermissions}
-              />
-            )}
-            {activeTab === 'market' && <MarketSection commodities={commodities} logAction={logAction} onDownload={handleDownload} isSuperAdmin={isSuperAdmin} adminPermissions={adminPermissions} />}
-            {activeTab === 'news_ticker' && <NewsTickerSection news={news} logAction={logAction} isSuperAdmin={isSuperAdmin} adminPermissions={adminPermissions} />}
-            {activeTab === 'reports' && <ReportsManagementSection reports={reports} logAction={logAction} isSuperAdmin={isSuperAdmin} adminPermissions={adminPermissions} commodities={commodities} settings={settings} />}
-            {activeTab === 'content' && <ContentSection logAction={logAction} isSuperAdmin={isSuperAdmin} adminPermissions={adminPermissions} />}
-            {activeTab === 'settings' && <SettingsSection settings={settings} logAction={logAction} isSuperAdmin={isSuperAdmin} adminPermissions={adminPermissions} />}
-            {activeTab === 'messages' && <MessagesSection messages={messages} logAction={logAction} onDownload={handleDownload} isSuperAdmin={isSuperAdmin} adminPermissions={adminPermissions} />}
-            {activeTab === 'admins' && <AdminsSection adminsList={adminsList} logAction={logAction} currentUserEmail={auth.currentUser?.email} />}
-            {activeTab === 'logs' && <LogsSection logs={logs} onDownload={handleDownload} isSuperAdmin={isSuperAdmin} adminPermissions={adminPermissions} />}
-          </motion.div>
-        </AnimatePresence>
-      </main>
-    </div>
-  );
-};
-
-// --- Sub-Sections ---
-
-const ContentSection = ({ logAction }: any) => {
-  return (
-    <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
-      <div className="bg-[#121E3D] border border-[#1C2E5A] rounded-2xl p-6">
-        <h3 className="text-lg font-bold text-white mb-6 flex items-center gap-2">
-          <LayoutDashboard size={20} className="text-[#D4AF37]" /> إدارة الأقسام والصفحات
-        </h3>
-        <div className="space-y-4">
-          <button className="w-full flex items-center justify-between p-4 bg-[#1C2E5A]/30 border border-[#1C2E5A] rounded-xl hover:border-[#D4AF37] transition-all text-white">
-            <span>إدارة الصفحة الرئيسية</span>
-            <ChevronRight size={18} />
-          </button>
-          <button className="w-full flex items-center justify-between p-4 bg-[#1C2E5A]/30 border border-[#1C2E5A] rounded-xl hover:border-[#D4AF37] transition-all text-white">
-            <span>إدارة صفحة التقارير</span>
-            <ChevronRight size={18} />
-          </button>
-          <button className="w-full flex items-center justify-between p-4 bg-[#1C2E5A]/30 border border-[#1C2E5A] rounded-xl hover:border-[#D4AF37] transition-all text-white">
-            <span>إضافة صفحة جديدة</span>
-            <Plus size={18} className="text-[#D4AF37]" />
-          </button>
-        </div>
-      </div>
-
-      <div className="bg-[#121E3D] border border-[#1C2E5A] rounded-2xl p-6">
-        <h3 className="text-lg font-bold text-white mb-6 flex items-center gap-2">
-          <ImageIcon size={20} className="text-[#D4AF37]" /> الوسائط والبنرات
-        </h3>
-        <div className="grid grid-cols-2 gap-4">
-          <div className="aspect-video bg-[#0A1128] border border-dashed border-[#1C2E5A] rounded-xl flex flex-col items-center justify-center text-gray-500 hover:text-[#D4AF37] hover:border-[#D4AF37] cursor-pointer transition-all">
-            <Upload size={24} className="mb-2" />
-            <span className="text-xs">رفع بنر جديد</span>
-          </div>
-          <div className="aspect-video bg-[#0A1128] border border-dashed border-[#1C2E5A] rounded-xl flex flex-col items-center justify-center text-gray-500 hover:text-[#D4AF37] hover:border-[#D4AF37] cursor-pointer transition-all">
-            <Upload size={24} className="mb-2" />
-            <span className="text-xs">تغيير الشعار</span>
-          </div>
-        </div>
-      </div>
-    </div>
-  );
-};
-
-const OverviewSection = ({ newsCount, commoditiesCount, logs, stats, messagesCount, onInitializeStats, onResetStats, setActiveTab, isSuperAdmin, adminPermissions }: any) => {
-  return (
-    <div className="space-y-8">
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-6">
-        <StatCard title="إجمالي الزوار" value={stats?.totalVisitors || 0} icon={Users} color="purple" />
-        <StatCard title="الرسائل الجديدة" value={messagesCount} icon={MessageSquare} color="red" />
-        <StatCard title="إجمالي الأخبار" value={newsCount} icon={Newspaper} color="blue" />
-        <StatCard title="السلع المراقبة" value={commoditiesCount} icon={TrendingUp} color="gold" />
-        {isSuperAdmin && (
-          <StatCard title="عمليات اليوم" value={logs.filter((l: any) => {
-            try {
-               return l.timestamp?.toDate() && !isNaN(l.timestamp.toDate().getTime()) && new Date(l.timestamp.toDate()).toDateString() === new Date().toDateString();
-            } catch(e) { return false; }
-          }).length} icon={History} color="green" />
-        )}
-      </div>
-
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
-        <div className="lg:col-span-2 space-y-8">
-          <div className="bg-[#121E3D] border border-[#1C2E5A] rounded-2xl p-6">
-            <h3 className="text-lg font-bold text-white mb-6 flex items-center gap-2">
-              <Zap size={20} className="text-[#D4AF37]" /> إجراءات سريعة
-            </h3>
-            <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-              {(isSuperAdmin || adminPermissions?.includes('manage_news')) && (
-                <button 
-                  onClick={() => setActiveTab('news_ticker')}
-                  className="p-4 bg-[#1C2E5A]/30 border border-[#1C2E5A] rounded-xl hover:border-[#D4AF37] transition-all text-center group"
-                >
-                  <Plus size={24} className="mx-auto mb-2 text-[#D4AF37] group-hover:scale-110 transition-transform" />
-                  <span className="text-white text-xs font-bold">إضافة خبر</span>
-                </button>
-              )}
-              {(isSuperAdmin || adminPermissions?.includes('manage_commodities')) && (
-                <button 
-                  onClick={() => setActiveTab('market')}
-                  className="p-4 bg-[#1C2E5A]/30 border border-[#1C2E5A] rounded-xl hover:border-[#D4AF37] transition-all text-center group"
-                >
-                  <TrendingUp size={24} className="mx-auto mb-2 text-[#D4AF37] group-hover:scale-110 transition-transform" />
-                  <span className="text-white text-xs font-bold">تحديث أسعار</span>
-                </button>
-              )}
-              {(isSuperAdmin || adminPermissions?.includes('manage_messages')) && (
-                <button 
-                  onClick={() => setActiveTab('messages')}
-                  className="p-4 bg-[#1C2E5A]/30 border border-[#1C2E5A] rounded-xl hover:border-[#D4AF37] transition-all text-center group"
-                >
-                  <Mail size={24} className="mx-auto mb-2 text-[#D4AF37] group-hover:scale-110 transition-transform" />
-                  <span className="text-white text-xs font-bold">الرسائل</span>
-                </button>
-              )}
-              {(isSuperAdmin || adminPermissions?.includes('manage_settings')) && (
-                <button 
-                  onClick={() => setActiveTab('settings')}
-                  className="p-4 bg-[#1C2E5A]/30 border border-[#1C2E5A] rounded-xl hover:border-[#D4AF37] transition-all text-center group"
-                >
-                  <Settings size={24} className="mx-auto mb-2 text-[#D4AF37] group-hover:scale-110 transition-transform" />
-                  <span className="text-white text-xs font-bold">الإعدادات</span>
-                </button>
-              )}
-            </div>
-          </div>
-
-          {isSuperAdmin && (
-            <div className="bg-[#121E3D] border border-[#1C2E5A] rounded-2xl p-6">
-              <h3 className="text-lg font-bold text-white mb-6">آخر النشاطات</h3>
-              <div className="space-y-4">
-                {logs.slice(0, 5).map((log: any) => (
-                  <div key={log.id} className="flex items-center gap-4 p-4 bg-[#1C2E5A]/30 rounded-xl border border-[#1C2E5A]">
-                    <div className="w-10 h-10 rounded-full bg-[#D4AF37]/10 flex items-center justify-center text-[#D4AF37]">
-                      <History size={20} />
-                    </div>
-                    <div className="flex-grow">
-                      <div className="text-white font-medium">{log.action}</div>
-                      <div className="text-gray-400 text-xs">{log.details}</div>
-                    </div>
-                    <div className="text-gray-500 text-xs">
-                      {safeFormatDate(log.timestamp)}
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </div>
-          )}
-        </div>
-
-        <div className="space-y-8">
-          {!stats ? (
-            <div className="bg-yellow-500/10 border border-yellow-500/20 p-6 rounded-2xl">
-              <h4 className="text-yellow-500 font-bold mb-2">الإحصائيات غير مفعلة</h4>
-              <p className="text-yellow-500/70 text-sm mb-4">يجب تهيئة عداد الزوار للبدء في تتبع حركة الموقع.</p>
-              <button 
-                onClick={onInitializeStats}
-                className="w-full bg-yellow-500 text-[#0A1128] px-4 py-3 rounded-xl font-black text-sm shadow-lg shadow-yellow-500/20 hover:scale-105 transition-all"
-              >
-                تهيئة العداد الآن
-              </button>
-            </div>
-          ) : (
-            <div className="bg-[#121E3D] border border-[#1C2E5A] p-6 rounded-2xl">
-              <h4 className="text-white font-bold mb-4 flex items-center gap-2">
-                <BarChart3 size={20} className="text-[#D4AF37]" /> إحصائيات الزوار
-              </h4>
-              <div className="space-y-4">
-                <div className="flex justify-between items-center p-3 bg-[#1C2E5A]/30 rounded-xl">
-                  <span className="text-gray-400 text-sm">إجمالي الزيارات</span>
-                  <span className="text-white font-bold">{stats.totalVisitors}</span>
-                </div>
-                <div className="flex justify-between items-center p-3 bg-[#1C2E5A]/30 rounded-xl">
-                  <span className="text-gray-400 text-sm">آخر تصفير</span>
-                  <span className="text-gray-500 text-[10px]">{safeFormatDate(stats.lastReset, 'date')}</span>
-                </div>
-                <button 
-                  onClick={onResetStats}
-                  className="w-full mt-4 bg-red-500/10 text-red-500 border border-red-500/20 px-4 py-3 rounded-xl font-bold text-sm hover:bg-red-500 hover:text-white transition-all"
-                >
-                  إعادة تعيين العداد
-                </button>
-              </div>
-            </div>
-          )}
-
-          <div className="bg-[#121E3D] border border-[#1C2E5A] rounded-2xl p-6">
-            <h3 className="text-lg font-bold text-white mb-6 flex items-center gap-2">
-              <Shield size={20} className="text-[#D4AF37]" /> حالة النظام
-            </h3>
-            <div className="space-y-4">
-              <div className="flex items-center gap-3 text-sm">
-                <div className="w-2 h-2 rounded-full bg-green-500 animate-pulse"></div>
-                <span className="text-gray-400">قاعدة البيانات:</span>
-                <span className="text-green-500 font-bold">متصل</span>
-              </div>
-              <div className="flex items-center gap-3 text-sm">
-                <div className="w-2 h-2 rounded-full bg-green-500 animate-pulse"></div>
-                <span className="text-gray-400">المصادقة:</span>
-                <span className="text-green-500 font-bold">مفعلة</span>
-              </div>
-              <div className="flex items-center gap-3 text-sm">
-                <div className="w-2 h-2 rounded-full bg-green-500 animate-pulse"></div>
-                <span className="text-gray-400">تتبع الزوار:</span>
-                <span className="text-green-500 font-bold">نشط</span>
-              </div>
-            </div>
-          </div>
-        </div>
-      </div>
-    </div>
-  );
-};
-
-const StatCard = ({ title, value, icon: Icon, color }: any) => {
-  const colors: any = {
-    blue: 'bg-blue-500/10 text-blue-500 border-blue-500/20',
-    gold: 'bg-[#D4AF37]/10 text-[#D4AF37] border-[#D4AF37]/20',
-    green: 'bg-green-500/10 text-green-500 border-green-500/20',
-    purple: 'bg-purple-500/10 text-purple-500 border-purple-500/20',
-    red: 'bg-red-500/10 text-red-500 border-red-500/20'
-  };
-  return (
-    <div className={`p-6 rounded-2xl border ${colors[color]} flex items-center justify-between`}>
-      <div>
-        <div className="text-sm opacity-70 mb-1">{title}</div>
-        <div className="text-3xl font-bold">{value}</div>
-      </div>
-      <div className="p-4 rounded-xl bg-white/5">
-        <Icon size={32} />
-      </div>
-    </div>
-  );
-};
-
-const MarketSection = ({ commodities, logAction, onDownload, isSuperAdmin, adminPermissions }: any) => {
-  const [editingId, setEditingId] = useState<string | null>(null);
-  const [formData, setFormData] = useState<any>({});
-  const [selectedIds, setSelectedIds] = useState<string[]>([]);
-  const [showImportModal, setShowImportModal] = useState(false);
-  const [importSector, setImportSector] = useState('energy');
-  const [importCurrency, setImportCurrency] = useState('USD');
-  const [searchQuery, setSearchQuery] = useState('');
-
-  const canEdit = isSuperAdmin || adminPermissions?.includes('manage_commodities');
-  const canAddDelete = isSuperAdmin || adminPermissions?.includes('add_delete_commodities');
-  const canImport = isSuperAdmin || adminPermissions?.includes('import_csv');
-  const canExport = isSuperAdmin || adminPermissions?.includes('export_data');
-
-  const filteredCommodities = commodities.filter((c: any) => {
-    const q = searchQuery.toLowerCase();
+  if (!isAdmin) {
     return (
-      (c.symbol && c.symbol.toLowerCase().includes(q)) ||
-      (c.nameAr && c.nameAr.toLowerCase().includes(q)) ||
-      (c.nameEn && c.nameEn.toLowerCase().includes(q))
+      <div className="min-h-screen bg-[#050A18] flex items-center justify-center p-4" dir={language === 'ar' ? 'rtl' : 'ltr'}>
+        <div className="bg-[#0A1128] p-10 rounded-[2.5rem] border border-[#1C2E5A] w-full max-w-sm shadow-2xl relative overflow-hidden">
+          <div className="absolute top-0 left-0 w-full h-1.5 bg-gradient-to-r from-[#D4AF37] via-[#F3D47A] to-[#D4AF37]"></div>
+          
+          <div className="flex justify-center mb-8">
+            <div className="w-20 h-20 bg-[#D4AF37]/10 rounded-full flex items-center justify-center border border-[#D4AF37]/30 shadow-[0_0_30px_rgba(212,175,55,0.1)]">
+              <Shield className="text-[#D4AF37] animate-pulse" size={40} />
+            </div>
+          </div>
+          
+          <h2 className="text-2xl font-black text-white text-center mb-1 uppercase tracking-tighter">
+            {language === 'ar' ? 'بوابة المسؤول' : 'Admin Portal'}
+          </h2>
+          <p className="text-gray-500 text-center mb-10 text-[10px] font-black uppercase tracking-[0.2em]">
+            {language === 'ar' ? 'يتطلب الوصول تصريح خاص' : 'Authorization required'}
+          </p>
+          
+          <div className="space-y-4">
+            <button
+              onClick={handleGoogleLogin}
+              disabled={isLoggingIn}
+              className="w-full h-14 flex items-center justify-center gap-4 bg-white hover:bg-gray-100 text-[#0A1128] font-black rounded-2xl transition-all transform hover:scale-[1.02] active:scale-[0.98] disabled:opacity-50 shadow-xl"
+            >
+              <img src="https://www.google.com/favicon.ico" alt="Google" className="w-6 h-6" />
+              <span className="uppercase tracking-tight text-sm">{isLoggingIn ? (language === 'ar' ? 'جاري التحقق...' : 'Verifying...') : (language === 'ar' ? 'الدخول عبر جوجل' : 'Enter with Google')}</span>
+            </button>
+          </div>
+          
+          {loginError && (
+            <div className="mt-6 p-4 bg-red-500/10 border border-red-500/20 rounded-2xl text-red-500 text-[10px] font-black uppercase text-center flex items-center justify-center gap-2">
+              <AlertCircle size={14} />
+              {loginError}
+            </div>
+          )}
+          
+          <div className="mt-10 text-center">
+            <button onClick={() => navigate('/')} className="text-gray-600 hover:text-[#D4AF37] text-[10px] font-black uppercase tracking-[0.3em] transition-all flex items-center justify-center gap-2 mx-auto">
+              {language === 'ar' ? <ChevronRight size={14} className="rotate-180" /> : <ChevronLeft size={14} />}
+              {t('returnHome')}
+            </button>
+          </div>
+        </div>
+      </div>
     );
-  });
+  }
 
-  // Helper to normalize and unify Arabic/English text for robust search and IDs
-  const normalizeForSearch = (text: string) => {
-    if (!text) return '';
-    return text
-      .trim()
-      .replace(/[أإآ]/g, 'ا')
-      .replace(/ة/g, 'ه')
-      .replace(/ى/g, 'ي')
-      .replace(/\s+/g, '') // Remove all mapping spaces for strict ID matching
-      .toLowerCase();
-  };
-
-  // Helper to generate a unique deterministic ID from symbol or name
-  const getCommodityId = (item: any) => {
-    const symbol = normalizeForSearch(item.symbol || '');
-    const nameAr = normalizeForSearch(item.nameAr || '');
-    if (symbol) return `comm_${symbol}`;
-    return `comm_${nameAr}`;
-  };
-
-  // Helper to update history array
-  const getUpdatedHistory = (existingHistory: any[], newPrice: number) => {
-    const timeStr = new Date().toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false });
-    const newPoint = { time: timeStr, price: newPrice };
-    
-    if (!existingHistory || existingHistory.length === 0) {
-      return Array(12).fill(newPoint);
-    }
-    
-    const updated = [...existingHistory, newPoint].slice(-24);
-    return updated;
-  };
-
-  // Function to find all duplicates and merge into one master record
-  const consolidateDuplicates = async (searchSymbol: string, searchNameAr: string, freshData: any) => {
-    const normSymbol = normalizeForSearch(searchSymbol);
-    const normNameAr = normalizeForSearch(searchNameAr);
-
-    // Find ALL matches across the collection
-    const matches = commodities.filter((c: any) => {
-      const cSymbol = normalizeForSearch(c.symbol);
-      const cNameAr = normalizeForSearch(c.nameAr);
-      return (normSymbol && cSymbol === normSymbol) || (normNameAr && cNameAr === normNameAr);
-    });
-
-    const deterministicId = getCommodityId(freshData);
-    const masterDocRef = doc(db, 'commodities', deterministicId);
-
-    // Filter matches to find existing Master or Slave records
-    const slaves = matches.filter((m: any) => m.id !== deterministicId);
-    
-    // 1. Delete all slaves (Random IDs or old IDs)
-    for (const slave of slaves) {
-      try {
-        await deleteDoc(doc(db, 'commodities', slave.id));
-        console.log(`Deleted duplicate commodity record: ${slave.id}`);
-      } catch (e) {
-        console.error(`Failed to delete slave ${slave.id}`, e);
-      }
-    }
-
-    // 2. Upsert the data into the Master record
-    await setDoc(masterDocRef, freshData, { merge: true });
-    return deterministicId;
-  };
-
-  const handleEdit = (item: any) => {
-    if (!canEdit) return;
-    setEditingId(item.id);
-    setFormData(item);
-  };
-
-  const handleSave = async () => {
-    if (!editingId || !canEdit) return;
-    try {
-      const existing = commodities.find((c: any) => c.id === editingId);
-      const oldPrice = existing?.price || formData.price;
-      const newPrice = Number(formData.price);
-      const change = Number((newPrice - oldPrice).toFixed(2));
-      const changePercent = oldPrice > 0 ? Number(((change / oldPrice) * 100).toFixed(2)) : 0;
-
-      const updatedData = {
-        ...formData,
-        price: newPrice,
-        prevClose: oldPrice,
-        change,
-        changeAmount: change,
-        changePercent,
-        high: Math.max(existing?.high || newPrice, newPrice),
-        low: Math.min(existing?.low || newPrice, newPrice),
-        trend: change >= 0 ? 'up' : 'down',
-        history: getUpdatedHistory(existing?.history || [], newPrice),
-        lastUpdated: serverTimestamp()
-      };
-
-      await updateDoc(doc(db, 'commodities', editingId), updatedData);
-      await logAction('تعديل سلعة', `تم تعديل بيانات ${formData.nameAr} وحساب الفوارق تلقائياً`);
-      setEditingId(null);
-    } catch (e) {
-      handleFirestoreError(e, OperationType.UPDATE, `commodities/${editingId}`);
-    }
-  };
-
-  const handleImportCSV = (e: any) => {
-    if (!canImport) return;
-    const file = e.target.files[0];
+  const handleExcelImportClick = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
     if (!file) return;
-    const reader = new FileReader();
-    reader.onload = async (event: any) => {
-      const text = event.target.result;
-      const rows = text.split('\n').filter((r:string) => r.trim()).slice(1);
-      let processedCount = 0;
-      
-      for (const row of rows) {
-        const parts = row.split(',');
-        if (parts.length >= 6) {
-          const [symbolRaw, nameArRaw, nameEnRaw, categoryRaw, priceRaw, unitRaw] = parts;
-          const symbolInput = symbolRaw.trim();
-          const nameArInput = nameArRaw.trim();
-          const nameEnInput = nameEnRaw.trim();
-          const priceInput = parseFloat(priceRaw) || 0;
-          const unitInput = unitRaw.trim();
-          const categoryInput = categoryRaw.trim() || importSector;
+    setImportConfig({ ...importConfig, file });
+    setShowImportModal(true);
+    e.target.value = '';
+  };
 
-          // Aggressive matching: Symbol or Arabic Name
-          const existing = commodities.find((c: any) => 
-            (c.symbol && normalizeForSearch(c.symbol) === normalizeForSearch(symbolInput)) || 
-            (c.nameAr && normalizeForSearch(c.nameAr) === normalizeForSearch(nameArInput))
-          );
+  const processExcelImport = async () => {
+    const { file, sectorAr, sectorEn, currency } = importConfig;
+    if (!file) return;
+
+    const reader = new FileReader();
+    reader.onload = async (evt) => {
+      try {
+        const bstr = evt.target?.result;
+        const wb = XLSX.read(bstr, { type: 'binary' });
+        const wsname = wb.SheetNames[0];
+        const ws = wb.Sheets[wsname];
+        const data = XLSX.utils.sheet_to_json(ws);
+
+        const sectorsSnap = await getDocs(collection(db, 'sectors'));
+        const dbSectors = sectorsSnap.docs.map(d => d.data());
+        const validSectorsAr = dbSectors.map(s => s.nameAr?.trim()?.toLowerCase());
+        const validSectorsEn = dbSectors.map(s => s.nameEn?.trim()?.toLowerCase());
+        const validCurrencies = ['usd', 'eur', 'lyd', 'دولار', 'يورو', 'دينار ليبي', 'دينار'];
+
+        let addedCount = 0;
+        let updatedCount = 0;
+        let errorCount = 0;
+        const errorDetails: string[] = [];
+        const processedSymbols = new Set<string>();
+
+        for (let i = 0; i < data.length; i++) {
+          const item = data[i] as any;
+          const rowNumber = i + 2; // Assuming row 1 is header
+          const symbolStr = item.symbol || item['الرمز'] || item['Code'] || item['Symbol'] || '';
+          const symbol = String(symbolStr).trim();
           
-          const oldPrice = existing?.price || priceInput;
-          const change = Number((priceInput - oldPrice).toFixed(2));
-          const changePercent = oldPrice > 0 ? Number(((change / oldPrice) * 100).toFixed(2)) : 0;
+          if (!symbol) {
+            errorCount++;
+            errorDetails.push(`Row ${rowNumber}: Missing symbol (الرمز)`);
+            continue;
+          }
+
+          if (processedSymbols.has(symbol)) {
+            errorCount++;
+            errorDetails.push(`Row ${rowNumber}: Duplicate symbol in file (${symbol})`);
+            continue;
+          }
+          processedSymbols.add(symbol);
+
+          const rawPrice = item.price || item['السعر'] || item['Price'];
+          const priceStr = String(rawPrice).replace(/,/g, '');
+          const priceNum = Number(priceStr);
           
-          const commodityData: any = {
-            symbol: symbolInput,
-            nameAr: nameArInput,
-            nameEn: nameEnInput,
-            category: categoryInput,
-            price: priceInput,
-            prevClose: oldPrice,
-            change,
-            changeAmount: change,
-            changePercent,
-            high: Math.max(existing?.high || priceInput, priceInput),
-            low: Math.min(existing?.low || priceInput, priceInput),
-            trend: change >= 0 ? 'up' : 'down',
-            unit: unitInput,
-            currency: importCurrency,
-            history: getUpdatedHistory(existing?.history || [], priceInput),
-            lastUpdated: serverTimestamp()
+          if (rawPrice === undefined || rawPrice === null || isNaN(priceNum) || priceNum < 0) {
+            errorCount++;
+            errorDetails.push(`Row ${rowNumber}: Invalid price for ${symbol}`);
+            continue;
+          }
+
+          const rawChange = item.changePercent || item['التغير المئوي'] || item['Change'];
+          let changeNum = 0;
+          if (rawChange !== undefined && rawChange !== null) {
+            const changeStr = String(rawChange).replace(/%/g, '');
+            changeNum = Number(changeStr);
+            if (isNaN(changeNum)) {
+               errorCount++;
+               errorDetails.push(`Row ${rowNumber}: Invalid change percentage for ${symbol}`);
+               continue;
+            }
+          }
+
+          const sectorAr = (item.sectorAr || item['القطاع بالعربية'] || item['القطاع'] || item['التصنيف'] || importConfig.sectorAr || '').trim();
+          const sectorEn = (item.sectorEn || item['Sector'] || item['Category'] || importConfig.sectorEn || '').trim();
+
+          const normalizedSectorAr = sectorAr.toLowerCase();
+          const normalizedSectorEn = sectorEn.toLowerCase();
+
+          if (sectorAr && !validSectorsAr.includes(normalizedSectorAr)) {
+            errorCount++;
+            errorDetails.push(`Row ${rowNumber}: Unknown sector (AR) '${sectorAr}' for ${symbol}. Please add it in Sectors tab first.`);
+            continue;
+          }
+
+          if (sectorEn && !validSectorsEn.includes(normalizedSectorEn)) {
+            errorCount++;
+            errorDetails.push(`Row ${rowNumber}: Unknown sector (EN) '${sectorEn}' for ${symbol}. Please add it in Sectors tab first.`);
+            continue;
+          }
+
+          const currency = (item.currency || item['العملة'] || item['Currency'] || importConfig.currency || '').trim();
+          if (currency && !validCurrencies.includes(currency.toLowerCase())) {
+            errorCount++;
+            errorDetails.push(`Row ${rowNumber}: Invalid currency '${currency}' for ${symbol}. Must be USD, EUR, or LYD.`);
+            continue;
+          }
+
+          let previousPrice = priceNum;
+          if (changeNum !== 0) {
+              previousPrice = priceNum / (1 + (changeNum / 100));
+          }
+          
+          const changeValue = priceNum - previousPrice;
+          
+          const commodityData = {
+            name_ar: item.nameAr || item['الاسم بالعربية'] || item['الاسم'] || item['السلعة'] || '',
+            name_en: item.nameEn || item['Name'] || item['Commodity'] || '',
+            symbol: symbol,
+            sector: sectorAr,
+            price: priceNum,
+            previous_price: previousPrice,
+            change_value: changeValue,
+            change_percent: changeNum,
+            trend: changeNum >= 0 ? 'up' : 'down',
+            high: priceNum,
+            low: priceNum,
+            unit: item.unit || item['الوحدة'] || item['Unit'] || '',
+            source: item.source || item['المصدر'] || item['Source'] || '',
+            status: 'active',
+            is_visible: true,
+            updated_at: new Date().toISOString()
           };
 
-          try {
-            await consolidateDuplicates(symbolInput, nameArInput, commodityData);
-            processedCount++;
-          } catch (err) {
-            console.error("Import error", err);
+          // Check if it already exists
+          const existing = commodities.find(c => c.symbol === symbol);
+          
+          if (existing) {
+            await supabase.from('commodities').update(commodityData).eq('id', existing.id);
+            updatedCount++;
+          } else {
+            await supabase.from('commodities').insert([commodityData]);
+            addedCount++;
           }
         }
+        
+        const message = language === 'ar' 
+          ? `تم الاستيراد: ${addedCount} جديد، ${updatedCount} تحديث. ${errorCount > 0 ? `فشل: ${errorCount}` : ''}`
+          : `Import complete: ${addedCount} new, ${updatedCount} updated. ${errorCount > 0 ? `Failed: ${errorCount}` : ''}`;
+        
+        setImportFeedback({ message, errors: errorDetails });
+          
+        logUserActivity('استيراد بيانات', `استيراد من ملف: ${addedCount} جديد، ${updatedCount} تحديث`);
+      } catch (error: any) {
+        console.error(error);
+        const errorMessage = error?.message || t('importError');
+        setImportFeedback({ 
+          message: language === 'ar' ? 'حدث خطأ أثناء الاستيراد' : 'Error occurred during import', 
+          errors: [errorMessage] 
+        });
       }
-      await logAction('دمج واستيراد بيانات', `تم تنقية ودمج ${processedCount} سلع من ملف CSV`);
-      alert(`تم بنجاح تنقية الأسماء ودمج ${processedCount} سلعة!`);
-      setShowImportModal(false);
     };
-    reader.readAsText(file);
-    e.target.value = null;
+    reader.readAsBinaryString(file);
   };
 
-  const handleDelete = async (id: string) => {
-    if (!canAddDelete) return;
-    if (!window.confirm('هل أنت متأكد من حذف هذه السلعة؟')) return;
-    try {
-      await deleteDoc(doc(db, 'commodities', id));
-      await logAction('حذف سلعة', `تم حذف السلعة: ${id}`);
-      setSelectedIds(selectedIds.filter(selectedId => selectedId !== id));
-    } catch (e) {
-      handleFirestoreError(e, OperationType.DELETE, `commodities/${id}`);
-    }
+  // Chart Data Processing
+  const getActivityData = () => {
+    const last7Days = Array.from({ length: 7 }, (_, i) => {
+      const d = new Date();
+      d.setDate(d.getDate() - i);
+      return d.toISOString().split('T')[0];
+    }).reverse();
+
+    return last7Days.map(date => ({
+      name: date,
+      activity: logs.filter(l => l.timestamp?.toDate().toISOString().split('T')[0] === date).length
+    }));
   };
 
-  const handleDeleteSelected = async () => {
-    if (!canAddDelete) return;
-    if (selectedIds.length === 0) return;
-    if (!window.confirm(`هل أنت متأكد من حذف ${selectedIds.length} عنصر/عناصر؟`)) return;
-    
-    try {
-      for (const id of selectedIds) {
-         await deleteDoc(doc(db, 'commodities', id));
-      }
-      await logAction('حذف سلع متعددة', `تم حذف ${selectedIds.length} سلع`);
-      setSelectedIds([]);
-    } catch(e) {
-      handleFirestoreError(e, OperationType.DELETE, `commodities_bulk`);
-    }
+  const getSectorData = () => {
+    const sectors: Record<string, number> = {};
+    commodities.forEach(c => {
+      const s = language === 'ar' ? c.sectorAr : c.sectorEn;
+      sectors[s] = (sectors[s] || 0) + 1;
+    });
+    return Object.entries(sectors).map(([name, value]) => ({ name, value }));
   };
 
-  const toggleSelectAll = () => {
-    if (selectedIds.length === filteredCommodities.length) {
-      setSelectedIds([]);
-    } else {
-      setSelectedIds(filteredCommodities.map((c: any) => c.id));
-    }
-  };
+  const COLORS = ['#D4AF37', '#1C2E5A', '#22C55E', '#A855F7', '#EF4444', '#3B82F6'];
 
-  const toggleSelect = (id: string) => {
-    if (selectedIds.includes(id)) {
-      setSelectedIds(selectedIds.filter(selId => selId !== id));
-    } else {
-      setSelectedIds([...selectedIds, id]);
-    }
-  };
-
-  const [isAdding, setIsAdding] = useState(false);
-  const [newCommodity, setNewCommodity] = useState({
-    symbol: '', nameAr: '', nameEn: '', category: 'energy', price: 0, unit: '', currency: 'USD'
-  });
-
-  const handleAddCommodity = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!canAddDelete) return;
-    try {
-      const searchSymbol = newCommodity.symbol.trim();
-      const searchNameAr = newCommodity.nameAr.trim();
-
-      const existing = commodities.find((c: any) => 
-        (c.symbol && normalizeForSearch(c.symbol) === normalizeForSearch(searchSymbol)) || 
-        (c.nameAr && normalizeForSearch(c.nameAr) === normalizeForSearch(searchNameAr))
-      );
-      
-      const oldPrice = existing?.price || newCommodity.price;
-      const price = Number(newCommodity.price);
-      const change = Number((price - oldPrice).toFixed(2));
-      const changePercent = oldPrice > 0 ? Number(((change / oldPrice) * 100).toFixed(2)) : 0;
-      
-      const commodityData = {
-        symbol: newCommodity.symbol.trim(),
-        nameAr: newCommodity.nameAr.trim(),
-        nameEn: newCommodity.nameEn.trim(),
-        category: newCommodity.category,
-        currency: newCommodity.currency,
-        unit: newCommodity.unit.trim(),
-        price,
-        prevClose: oldPrice,
-        change,
-        changeAmount: change,
-        changePercent,
-        high: Math.max(existing?.high || price, price),
-        low: Math.min(existing?.low || price, price),
-        trend: change >= 0 ? 'up' : 'down',
-        history: getUpdatedHistory(existing?.history || [], price),
-        lastUpdated: serverTimestamp()
-      };
-
-      await consolidateDuplicates(searchSymbol, searchNameAr, commodityData);
-      
-      if (existing) {
-        await logAction('تحديث سلعة', `تم دمج وتحديث السلعة: ${newCommodity.nameAr}`);
-      } else {
-        await logAction('إضافة سلعة', `تم إضافة سلعة جديدة مشفرة: ${newCommodity.nameAr}`);
-      }
-      
-      setIsAdding(false);
-      setNewCommodity({ symbol: '', nameAr: '', nameEn: '', category: 'energy', price: 0, unit: '', currency: 'USD' });
-    } catch (error) {
-      handleFirestoreError(error, OperationType.CREATE, 'commodities');
-    }
-  };
-
-  return (
-    <div className="space-y-6">
-      <div className="flex justify-between items-center bg-[#121E3D] p-4 rounded-xl border border-[#1C2E5A] flex-wrap gap-4">
-        <div className="flex items-center gap-4">
-          <h3 className="text-xl font-bold text-white">إدارة الأسعار والسلع (العدد: {filteredCommodities.length})</h3>
-          {selectedIds.length > 0 && (
-            <span className="text-red-500 font-bold bg-red-500/10 px-3 py-1 rounded-full text-sm">
-              محدد: {selectedIds.length}
-            </span>
-          )}
-        </div>
-        <div className="flex gap-4 flex-wrap items-center">
-          <div className="flex items-center bg-[#0A1128] rounded-lg px-3 py-2 border border-[#1C2E5A] focus-within:border-[#D4AF37] transition-colors">
-             <Search size={16} className="text-gray-400 ml-2" />
-             <input 
-                type="text" 
-                placeholder="بحث عن سلعة..."
-                value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
-                className="bg-transparent border-none outline-none text-white text-sm w-48"
-             />
-          </div>
-          {(selectedIds.length > 0 && canAddDelete) && (
-            <button 
-              onClick={handleDeleteSelected}
-              className="flex items-center gap-2 px-4 py-2 bg-red-500/10 text-red-500 rounded-lg hover:bg-red-500 hover:text-white transition-all font-bold border border-red-500/20"
-            >
-              <Trash2 size={18} /> حذف المحدد
-            </button>
-          )}
-          {canAddDelete && (
-            <button 
-              onClick={() => setIsAdding(!isAdding)}
-              className="flex items-center gap-2 px-4 py-2 bg-[#D4AF37] text-[#0A1128] rounded-lg hover:bg-[#B5952F] transition-all font-bold"
-            >
-              <Plus size={18} /> إضافة سلعة يدوياً
-            </button>
-          )}
-          {canExport && (
-            <button 
-              onClick={() => onDownload(commodities, 'market_data')}
-              className="flex items-center gap-2 px-4 py-2 bg-[#1C2E5A] text-white rounded-lg hover:bg-[#2A4075] transition-all border border-[#2A4075]"
-            >
-              <Download size={18} className="text-[#D4AF37]" /> تنزيل البيانات
-            </button>
-          )}
-          {canImport && (
-            <button 
-              onClick={() => setShowImportModal(true)}
-              className="flex items-center gap-2 px-4 py-2 bg-[#1C2E5A] text-white rounded-lg hover:bg-[#2A4075] transition-all cursor-pointer border border-[#2A4075]"
-            >
-              <Upload size={18} className="text-[#D4AF37]" /> استيراد CSV
-            </button>
-          )}
-        </div>
+  const DashboardTab = () => (
+    <div className="space-y-8">
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+        <StatsCard icon={<Users />} label={t('totalVisitors')} value={stats.totalVisitors} color="blue" />
+        <StatsCard icon={<TrendingUp />} label={t('activeCommodities')} value={commodities.length} color="gold" />
+        <StatsCard icon={<Newspaper />} label={t('newsItems')} value={news.length} color="emerald" />
+        <StatsCard icon={<MessageSquare />} label={t('messagesReceived')} value={messages.length} color="purple" />
       </div>
 
-      {showImportModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm">
-          <div className="bg-[#121E3D] border border-[#1C2E5A] rounded-2xl p-6 shadow-xl max-w-md w-full relative">
-            <button 
-              onClick={() => setShowImportModal(false)}
-              className="absolute top-4 left-4 text-gray-400 hover:text-white"
-            >
-              <X size={20} />
-            </button>
-            <h4 className="text-white font-bold mb-4 text-lg border-b border-[#1C2E5A] pb-3">استيراد بيانات من CSV</h4>
-            <div className="space-y-4 mb-6">
-              <div>
-                <label className="block text-gray-400 text-sm mb-2">اختر قطاع السلع المراد إضافتها:</label>
-                <select 
-                  value={importSector} 
-                  onChange={e => setImportSector(e.target.value)} 
-                  className="w-full bg-[#0A1128] border border-[#1C2E5A] rounded-xl px-4 py-3 text-white focus:outline-none focus:border-[#D4AF37]"
-                >
-                  <option value="energy">الطاقة</option>
-                  <option value="metals">المعادن</option>
-                  <option value="agriculture">السلع الزراعية</option>
-                  <option value="currencies">العملات / المؤشرات</option>
-                </select>
-              </div>
-              <div>
-                <label className="block text-gray-400 text-sm mb-2">اختر عملة التسعير بالملف:</label>
-                <select 
-                  value={importCurrency} 
-                  onChange={e => setImportCurrency(e.target.value)} 
-                  className="w-full bg-[#0A1128] border border-[#1C2E5A] rounded-xl px-4 py-3 text-white focus:outline-none focus:border-[#D4AF37]"
-                >
-                  <option value="USD">دولار أمريكي (USD)</option>
-                  <option value="EUR">يورو (EUR)</option>
-                  <option value="LYD">دينار ليبي (LYD)</option>
-                </select>
-              </div>
-              <div className="bg-[#0A1128] border border-dashed border-[#1C2E5A] rounded-xl p-8 text-center relative hover:border-[#D4AF37] transition-colors group">
-                <Upload size={32} className="mx-auto text-gray-500 group-hover:text-[#D4AF37] mb-2 transition-colors" />
-                <div className="text-gray-400 text-sm">اضغط هنا لاختيار ملف CSV</div>
-                <input type="file" accept=".csv" onChange={handleImportCSV} className="absolute inset-0 opacity-0 cursor-pointer" />
-              </div>
-            </div>
-            <div className="bg-blue-500/10 border border-blue-500/20 rounded-lg p-3 text-xs text-blue-400">
-              ملاحظة: تأكد أن ترتيب الأعمدة في ملفك هو: (الرمز، الاسم عربي، الاسم إنجليزي، فئة، السعر، الوحدة)
-            </div>
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
+        <div className="bg-[#0A1128] p-6 rounded-2xl border border-[#1C2E5A] shadow-xl">
+          <h3 className="text-xl font-bold text-white mb-6 flex items-center gap-2">
+            <Activity className="text-[#D4AF37]" size={20} />
+            {t('activityByDay')}
+          </h3>
+          <div className="h-[300px] w-full">
+            <ResponsiveContainer width="100%" height="100%">
+              <AreaChart data={getActivityData()}>
+                <defs>
+                  <linearGradient id="colorActivity" x1="0" y1="0" x2="0" y2="1">
+                    <stop offset="5%" stopColor="#D4AF37" stopOpacity={0.3}/>
+                    <stop offset="95%" stopColor="#D4AF37" stopOpacity={0}/>
+                  </linearGradient>
+                </defs>
+                <CartesianGrid strokeDasharray="3 3" stroke="#1C2E5A" vertical={false} />
+                <XAxis 
+                  dataKey="name" 
+                  stroke="#4B5563" 
+                  fontSize={10} 
+                  tickFormatter={(val) => val.split('-').slice(2).join('/')}
+                />
+                <YAxis stroke="#4B5563" fontSize={10} />
+                <Tooltip 
+                  contentStyle={{ backgroundColor: '#0A1128', border: '1px solid #1C2E5A', borderRadius: '12px' }}
+                  itemStyle={{ color: '#D4AF37' }}
+                />
+                <Area type="monotone" dataKey="activity" stroke="#D4AF37" fillOpacity={1} fill="url(#colorActivity)" strokeWidth={3} />
+              </AreaChart>
+            </ResponsiveContainer>
           </div>
         </div>
-      )}
 
-      {isAdding && (
-        <div className="bg-[#121E3D] border border-[#1C2E5A] rounded-2xl p-6 shadow-xl mb-6">
-          <h4 className="text-white font-bold mb-4">إضافة سلعة جديدة</h4>
-          <form onSubmit={handleAddCommodity} className="grid grid-cols-1 md:grid-cols-3 gap-4">
-            <input type="text" placeholder="الرمز (مثال: BRENT)" value={newCommodity.symbol} onChange={e => setNewCommodity({...newCommodity, symbol: e.target.value})} className="bg-[#0A1128] border border-[#1C2E5A] rounded-xl px-4 py-2 text-white" required />
-            <input type="text" placeholder="الاسم بالعربي" value={newCommodity.nameAr} onChange={e => setNewCommodity({...newCommodity, nameAr: e.target.value})} className="bg-[#0A1128] border border-[#1C2E5A] rounded-xl px-4 py-2 text-white" required />
-            <input type="text" placeholder="الاسم بالإنجليزي" value={newCommodity.nameEn} onChange={e => setNewCommodity({...newCommodity, nameEn: e.target.value})} className="bg-[#0A1128] border border-[#1C2E5A] rounded-xl px-4 py-2 text-white" required />
-            <select value={newCommodity.category} onChange={e => setNewCommodity({...newCommodity, category: e.target.value})} className="bg-[#0A1128] border border-[#1C2E5A] rounded-xl px-4 py-2 text-white">
-              <option value="energy">طاقة</option>
-              <option value="metals">معادن</option>
-              <option value="agriculture">زراعة</option>
-              <option value="currencies">عملات</option>
-            </select>
-            <div className="flex gap-2">
-              <input type="number" step="0.01" placeholder="السعر" value={newCommodity.price || ''} onChange={e => setNewCommodity({...newCommodity, price: parseFloat(e.target.value)})} className="bg-[#0A1128] border border-[#1C2E5A] rounded-xl px-4 py-2 text-white w-2/3" required />
-              <select value={newCommodity.currency} onChange={e => setNewCommodity({...newCommodity, currency: e.target.value})} className="bg-[#0A1128] border border-[#1C2E5A] rounded-xl px-2 py-2 text-white w-1/3">
-                <option value="USD">دولار</option>
-                <option value="EUR">يورو</option>
-                <option value="LYD">دينار</option>
-              </select>
-            </div>
-            <input type="text" placeholder="الوحدة (مثل: برميل، أونصة)" value={newCommodity.unit} onChange={e => setNewCommodity({...newCommodity, unit: e.target.value})} className="bg-[#0A1128] border border-[#1C2E5A] rounded-xl px-4 py-2 text-white" />
-            <div className="md:col-span-3 flex justify-end gap-2 mt-2">
-              <button type="button" onClick={() => setIsAdding(false)} className="px-6 py-2 rounded-xl text-gray-400 hover:bg-gray-800 transition-colors">إلغاء</button>
-              <button type="submit" className="px-6 py-2 bg-[#D4AF37] text-[#0A1128] font-bold rounded-xl hover:bg-[#B5952F] transition-colors">حفظ السلعة</button>
-            </div>
-          </form>
-        </div>
-      )}
-
-      <div className="bg-[#121E3D] border border-[#1C2E5A] rounded-2xl overflow-hidden">
-        <table className="w-full text-right">
-          <thead className="bg-[#1C2E5A] text-gray-300 text-sm">
-            <tr>
-              <th className="px-6 py-4 w-10">
-                <input 
-                  type="checkbox" 
-                  checked={selectedIds.length === filteredCommodities.length && filteredCommodities.length > 0} 
-                  onChange={toggleSelectAll}
-                  className="w-4 h-4 rounded border-[#1C2E5A] text-[#D4AF37] focus:ring-[#D4AF37] bg-[#0A1128]"
-                />
-              </th>
-              <th className="px-6 py-4">الرمز</th>
-              <th className="px-6 py-4">الاسم (عربي)</th>
-              <th className="px-6 py-4">القطاع</th>
-              <th className="px-6 py-4">السعر</th>
-              <th className="px-6 py-4">الفارق العددي</th>
-              <th className="px-6 py-4">الفجوة (%)</th>
-              <th className="px-6 py-4">أعلى سعر</th>
-              <th className="px-6 py-4">أدنى سعر</th>
-              <th className="px-6 py-4 text-center">الإجراءات</th>
-            </tr>
-          </thead>
-          <tbody className="divide-y divide-[#1C2E5A]">
-            {filteredCommodities.map((item: any) => (
-              <tr key={item.id} className="hover:bg-[#1C2E5A]/30 transition-colors">
-                <td className="px-6 py-4">
-                  <input 
-                    type="checkbox" 
-                    checked={selectedIds.includes(item.id)} 
-                    onChange={() => toggleSelect(item.id)}
-                    className="w-4 h-4 rounded border-[#1C2E5A] text-[#D4AF37] focus:ring-[#D4AF37] bg-[#0A1128]"
-                  />
-                </td>
-                {editingId === item.id ? (
-                  <>
-                    <td className="px-6 py-4">
-                      <input type="text" value={formData.symbol} onChange={e => setFormData({...formData, symbol: e.target.value})} className="w-full bg-[#0A1128] border border-[#1C2E5A] rounded px-2 py-1 text-white" />
-                    </td>
-                    <td className="px-6 py-4">
-                      <input type="text" value={formData.nameAr} onChange={e => setFormData({...formData, nameAr: e.target.value})} className="w-full bg-[#0A1128] border border-[#1C2E5A] rounded px-2 py-1 text-white" />
-                    </td>
-                    <td className="px-6 py-4">
-                      <select value={formData.category} onChange={e => setFormData({...formData, category: e.target.value})} className="w-full bg-[#0A1128] border border-[#1C2E5A] rounded px-2 py-1 text-white">
-                        <option value="energy">طاقة</option>
-                        <option value="metals">معادن</option>
-                        <option value="agriculture">زراعة</option>
-                        <option value="currencies">عملات</option>
-                      </select>
-                    </td>
-                    <td className="px-6 py-4 flex gap-2">
-                      <input type="number" value={formData.price} onChange={e => setFormData({...formData, price: parseFloat(e.target.value)})} className="w-16 bg-[#0A1128] border border-[#1C2E5A] rounded px-2 py-1 text-white" />
-                      <select value={formData.currency || 'USD'} onChange={e => setFormData({...formData, currency: e.target.value})} className="w-16 bg-[#0A1128] border border-[#1C2E5A] rounded px-1 py-1 text-white text-xs">
-                        <option value="USD">دولار</option>
-                        <option value="EUR">يورو</option>
-                        <option value="LYD">دينار</option>
-                      </select>
-                      <input type="text" value={formData.unit} onChange={e => setFormData({...formData, unit: e.target.value})} className="w-16 bg-[#0A1128] border border-[#1C2E5A] rounded px-2 py-1 text-white" placeholder="الوحدة" />
-                    </td>
-                    <td className="px-6 py-4">
-                      <input type="number" value={formData.change} onChange={e => setFormData({...formData, change: parseFloat(e.target.value)})} className="w-20 bg-[#0A1128] border border-[#1C2E5A] rounded px-2 py-1 text-white" />
-                    </td>
-                    <td className="px-6 py-4">
-                      <input type="number" value={formData.changePercent} onChange={e => setFormData({...formData, changePercent: parseFloat(e.target.value)})} className="w-20 bg-[#0A1128] border border-[#1C2E5A] rounded px-2 py-1 text-white" />
-                    </td>
-                    <td className="px-6 py-4">
-                      <input type="number" value={formData.high} onChange={e => setFormData({...formData, high: parseFloat(e.target.value)})} className="w-20 bg-[#0A1128] border border-[#1C2E5A] rounded px-2 py-1 text-white" />
-                    </td>
-                    <td className="px-6 py-4">
-                      <input type="number" value={formData.low} onChange={e => setFormData({...formData, low: parseFloat(e.target.value)})} className="w-20 bg-[#0A1128] border border-[#1C2E5A] rounded px-2 py-1 text-white" />
-                    </td>
-                    <td className="px-6 py-4 text-center">
-                      <div className="flex items-center justify-center gap-2">
-                        <button onClick={handleSave} className="p-2 text-green-400 hover:bg-green-400/10 rounded-lg">
-                          <Save size={18} />
-                        </button>
-                        <button onClick={() => setEditingId(null)} className="p-2 text-gray-400 hover:bg-gray-400/10 rounded-lg">
-                          <X size={18} />
-                        </button>
-                      </div>
-                    </td>
-                  </>
-                ) : (
-                  <>
-                    <td className="px-6 py-4 text-white font-mono">{item.symbol}</td>
-                    <td className="px-6 py-4 text-white">{item.nameAr}</td>
-                    <td className="px-6 py-4 text-gray-400 text-sm">
-                      {item.sectorDisplay}
-                    </td>
-                    <td className="px-6 py-4 text-white font-bold">
-                      {item.price} {item.currency === 'LYD' ? 'دينار' : item.currency === 'EUR' ? 'يورو' : item.currency === 'USD' ? 'دولار' : (item.currency || 'دولار')} / {item.unit}
-                    </td>
-                    <td className={`px-6 py-4 font-bold font-mono ${item.change >= 0 ? 'text-green-500' : 'text-red-500'}`}>
-                      {item.change >= 0 ? '+' : ''}{item.change}
-                    </td>
-                    <td className="px-6 py-4">
-                      <span className={`px-2 py-1 rounded text-xs font-bold ${item.changePercent >= 0 ? 'bg-green-500/10 text-green-500' : 'bg-red-500/10 text-red-500'}`}>
-                        {item.changePercent >= 0 ? '↑' : '↓'} {Math.abs(item.changePercent)}%
-                      </span>
-                    </td>
-                    <td className="px-6 py-4 text-gray-300 font-mono text-sm">{item.high || item.price}</td>
-                    <td className="px-6 py-4 text-gray-300 font-mono text-sm">{item.low || item.price}</td>
-                    <td className="px-6 py-4 text-center">
-                      <div className="flex items-center justify-center gap-2">
-                        {canEdit && (
-                          <button onClick={() => handleEdit(item)} className="p-2 text-blue-400 hover:bg-blue-400/10 rounded-lg">
-                            <Settings size={18} />
-                          </button>
-                        )}
-                        {canAddDelete && (
-                          <button onClick={() => handleDelete(item.id)} className="p-2 text-red-500 hover:bg-red-500/10 rounded-lg">
-                            <Trash2 size={18} />
-                          </button>
-                        )}
-                      </div>
-                    </td>
-                  </>
-                )}
-              </tr>
-            ))}
-            {filteredCommodities.length === 0 && (
-              <tr>
-                <td colSpan={10} className="p-16 text-center text-gray-500">
-                  <div className="flex flex-col items-center justify-center gap-2">
-                    <AlertCircle size={48} className="text-gray-600 mb-2 opacity-50" />
-                    <p className="text-lg">لا توجد سلع مضافة حالياً أو تتطابق مع بحثك</p>
-                    <p className="text-sm opacity-70">قم بإضافة سلع يدوياً أو استيراد ملف CSV أو جرب مصطلح بحث مختلف</p>
+        <div className="bg-[#0A1128] p-6 rounded-2xl border border-[#1C2E5A] shadow-xl">
+          <h3 className="text-xl font-bold text-white mb-6 flex items-center gap-2">
+            <History className="text-[#D4AF37]" size={20} />
+            {t('recentActivity')}
+          </h3>
+          <div className="space-y-3 max-h-[300px] overflow-y-auto pr-2 custom-scrollbar">
+            {logs.length > 0 ? logs.slice(0, 10).map((log) => (
+              <div key={log.id} className="p-3 bg-[#121E3D] border border-[#1C2E5A] rounded-xl flex items-start gap-3">
+                <div className="w-8 h-8 rounded-lg bg-[#1C2E5A] flex items-center justify-center shrink-0">
+                  <Zap size={16} className="text-[#D4AF37]" />
+                </div>
+                <div className="flex-1">
+                  <div className="flex justify-between items-start">
+                    <h4 className="text-white font-bold text-xs uppercase">{log.action}</h4>
+                    <span className="text-[10px] text-gray-500">{log.timestamp?.toDate().toLocaleTimeString()}</span>
                   </div>
-                </td>
-              </tr>
+                  <p className="text-[11px] text-gray-400 mt-1">{log.details}</p>
+                </div>
+              </div>
+            )) : (
+              <div className="text-center py-6 text-gray-500 italic uppercase tracking-widest text-xs">{t('noActivity')}</div>
             )}
-          </tbody>
-        </table>
+          </div>
+        </div>
       </div>
     </div>
   );
-};
 
-const ReportsManagementSection = ({ reports, logAction, commodities, settings }: any) => {
-  const [loading, setLoading] = useState(false);
-  const [editingId, setEditingId] = useState<string | null>(null);
-  const [formData, setFormData] = useState<any>({
-    titleAr: '', titleEn: '', contentAr: '', contentEn: '', topic: 'global_market', status: 'draft'
-  });
-
-  const topics = [
-    { id: 'global_market', ar: 'نظرة عامة على السوق العالمي', en: 'Global Market Overview' },
-    { id: 'energy', ar: 'تحليل سوق الطاقة', en: 'Energy Market Analysis' },
-    { id: 'metals', ar: 'توقعات المعادن الثمينة', en: 'Precious Metals Forecast' },
-    { id: 'agriculture', ar: 'تقرير السلع الزراعية', en: 'Agricultural Commodities Report' },
-  ];
-
-  const handleGenerateAI = async (lang: 'ar' | 'en') => {
-    setLoading(true);
-    try {
-      const apiKey = settings?.geminiApiKey || (typeof process !== 'undefined' ? process.env.GEMINI_API_KEY : undefined);
-      
-      if (!apiKey) {
-        throw new Error('مفتاح API غير متوفر. يرجى إدخال مفتاحك في تبويب الإعدادات أولاً.');
-      }
-
-      const marketSummary = commodities.map((item: any) => 
-        `${item.nameEn} (${item.symbol}): Price ${item.price} ${item.currency}, Change ${item.change} (${item.changePercent}%), High: ${item.high || item.price}, Low: ${item.low || item.price}`
-      ).join('\n');
-
-      const selectedTopic = topics.find(t => t.id === formData.topic);
-      const topicName = lang === 'ar' ? selectedTopic?.ar : selectedTopic?.en;
-
-      const prompt = lang === 'ar'
-        ? `بصفتك خبيراً اقتصادياً، اكتب تقرير تحليلي مفصل ومحترف باللغة العربية حول "${topicName}" بناءً على بيانات السوق الحالية:\n\n${marketSummary}\n\nاستخدم Markdown.`
-        : `As an economic expert, write a detailed and professional analytical report in English about "${topicName}" based on the following current market data:\n\n${marketSummary}\n\nUse Markdown.`;
-
-      const text = await generateWithRetry(apiKey, prompt);
-      
-      if (lang === 'ar') {
-        setFormData((prev: any) => ({ ...prev, contentAr: text, titleAr: `تقرير: ${topicName}` }));
-      } else {
-        setFormData((prev: any) => ({ ...prev, contentEn: text, titleEn: `Report: ${topicName}` }));
-      }
-    } catch (e: any) {
-      console.error('AI Generation Error:', e);
-      alert(`فشل التوليد: ${e.message}\n\nنصيحة: تأكد من مفتاح API في الإعدادات.`);
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const handleSave = async () => {
-    try {
-      if (editingId) {
-        await updateDoc(doc(db, 'reports', editingId), {
-          ...formData,
-          publishedAt: formData.status === 'published' ? serverTimestamp() : null
-        });
-        await logAction('تعديل تقرير', `تم تعديل تقرير: ${formData.titleAr}`);
-      } else {
-        await addDoc(collection(db, 'reports'), {
-          ...formData,
-          author: auth.currentUser?.email,
-          createdAt: serverTimestamp(),
-          publishedAt: formData.status === 'published' ? serverTimestamp() : null
-        });
-        await logAction('إنشاء تقرير', `تم إنشاء تقرير جديد: ${formData.titleAr}`);
-      }
-      setEditingId(null);
-      setFormData({ titleAr: '', titleEn: '', contentAr: '', contentEn: '', topic: 'global_market', status: 'draft' });
-    } catch (e) {
-      handleFirestoreError(e, OperationType.WRITE, 'reports');
-    }
-  };
-
-  const handleDelete = async (id: string) => {
-    if (!window.confirm('هل أنت متأكد من حذف هذا التقرير؟')) return;
-    try {
-      await deleteDoc(doc(db, 'reports', id));
-      await logAction('حذف تقرير', `تم حذف تقرير: ${id}`);
-    } catch (e) {
-      handleFirestoreError(e, OperationType.DELETE, `reports/${id}`);
-    }
-  };
-
-  const handleEdit = (report: any) => {
-    setEditingId(report.id);
-    setFormData(report);
-  };
+  const StatsCard = ({ icon, label, value, color }: any) => (
+    <div className="bg-[#0A1128] p-6 rounded-2xl border border-[#1C2E5A] hover:border-[#D4AF37]/50 transition-all shadow-xl">
+      <div className="flex items-center gap-4">
+        <div className={`w-12 h-12 rounded-xl bg-[#121E3D] text-[#D4AF37] flex items-center justify-center shadow-inner border border-[#1C2E5A]`}>
+          {React.cloneElement(icon, { size: 24 })}
+        </div>
+        <div>
+          <div className="text-gray-500 text-[10px] font-bold uppercase tracking-wider mb-1">{label}</div>
+          <div className="text-2xl font-black text-white tabular-nums">
+            {typeof value === 'number' ? value.toLocaleString() : value}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
 
   return (
-    <div className="space-y-8">
-      <div className="bg-[#121E3D] border border-[#1C2E5A] rounded-2xl p-8 shadow-2xl">
-        <h3 className="text-xl font-bold text-white mb-8 flex items-center gap-3">
-          <FileText className="text-[#D4AF37]" size={24} /> {editingId ? 'تعديل التقرير' : 'إنشاء تقرير جديد'}
-        </h3>
+    <div className={`min-h-screen bg-[#050A18] text-white flex flex-col lg:flex-row relative ${language === 'ar' ? 'rtl' : 'ltr'}`} dir={language === 'ar' ? 'rtl' : 'ltr'}>
+      {/* Mobile Toggle */}
+      <button 
+        onClick={() => setIsMobileMenuOpen(!isMobileMenuOpen)}
+        className="lg:hidden fixed top-4 right-4 z-[60] bg-[#D4AF37] text-[#0A1128] p-3 rounded-xl shadow-2xl border border-white/20"
+      >
+        {isMobileMenuOpen ? <X size={24} /> : <Menu size={24} />}
+      </button>
+
+      {/* Static Sidebar */}
+      <aside className={`fixed inset-y-0 ${language === 'ar' ? 'right-0 border-l' : 'left-0 border-r'} z-50 w-72 bg-[#0A1128] border-[#1C2E5A] transform transition-transform duration-300 ${isMobileMenuOpen ? 'translate-x-0' : language === 'ar' ? 'translate-x-[102%]' : '-translate-x-[102%]'} lg:translate-x-0 shadow-2xl flex flex-col`}>
+        <div className="h-24 flex items-center gap-4 px-8 border-b border-[#1C2E5A] bg-[#121E3D]/30 relative overflow-hidden shrink-0">
+          <div className="absolute top-0 right-0 w-32 h-32 bg-[#D4AF37]/5 rounded-full -mr-16 -mt-16 blur-2xl"></div>
+          <div className="w-12 h-12 bg-white rounded-2xl flex items-center justify-center p-1.5 shadow-lg relative z-10">
+            <img src={siteSettings?.siteLogo || "/logo.png"} alt="Logo" className="w-full h-full object-contain" />
+          </div>
+          <div className="flex flex-col relative z-10">
+            <span className="text-lg font-black tracking-tighter uppercase text-white leading-none">Admin</span>
+            <span className="text-[9px] font-black text-[#D4AF37] tracking-[0.3em] uppercase leading-none mt-1.5 font-sans">Command Center</span>
+          </div>
+        </div>
         
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-6">
-          <div className="space-y-2">
-            <label className="text-sm text-gray-400">اسم التقرير (عربي)</label>
-            <input 
-              type="text" 
-              value={formData.titleAr} 
-              onChange={e => setFormData({...formData, titleAr: e.target.value})} 
-              className="w-full bg-[#0A1128] border border-[#1C2E5A] rounded-xl px-4 py-3 text-white focus:border-[#D4AF37] outline-none"
-            />
+        <div className="flex-1 overflow-y-auto custom-scrollbar p-6 space-y-1">
+          <div className="mb-6">
+            <p className="text-[9px] font-black text-gray-700 uppercase tracking-[0.3em] mb-4 flex items-center gap-2">
+              <span className="w-1 h-1 rounded-full bg-[#D4AF37]"></span>
+              {language === 'ar' ? 'الرئيسية' : 'Core'}
+            </p>
+            <NavItem active={activeTab === 'dashboard'} icon={<LayoutDashboard />} label={t('dashboard' as any)} onClick={() => { setActiveTab('dashboard'); setIsMobileMenuOpen(false); }} language={language} />
+            {(adminUser?.role === 'super_admin' || adminUser?.permissions?.includes('commodities')) && (
+              <NavItem active={activeTab === 'commodities'} icon={<Database />} label={language === 'ar' ? 'إدارة السلع والأسعار' : 'Commodities'} onClick={() => { setActiveTab('commodities'); setIsMobileMenuOpen(false); }} language={language} />
+            )}
+            {(adminUser?.role === 'super_admin' || adminUser?.permissions?.includes('sectors')) && (
+              <NavItem active={activeTab === 'sectors'} icon={<Briefcase />} label={language === 'ar' ? 'إدارة القطاعات' : 'Sectors'} onClick={() => { setActiveTab('sectors'); setIsMobileMenuOpen(false); }} language={language} />
+            )}
           </div>
-          <div className="space-y-2">
-            <label className="text-sm text-gray-400">اسم التقرير (إنجليزي)</label>
-            <input 
-              type="text" 
-              value={formData.titleEn} 
-              onChange={e => setFormData({...formData, titleEn: e.target.value})} 
-              className="w-full bg-[#0A1128] border border-[#1C2E5A] rounded-xl px-4 py-3 text-white focus:border-[#D4AF37] outline-none"
-            />
+
+          <div className="mb-6">
+            <p className="text-[9px] font-black text-gray-700 uppercase tracking-[0.3em] mb-4 flex items-center gap-2">
+              <span className="w-1 h-1 rounded-full bg-[#D4AF37]"></span>
+              {language === 'ar' ? 'المحتوى' : 'Content'}
+            </p>
+            {(adminUser?.role === 'super_admin' || adminUser?.permissions?.includes('news')) && (
+              <NavItem active={activeTab === 'news'} icon={<Newspaper />} label={language === 'ar' ? 'إدارة الأخبار' : 'News'} onClick={() => { setActiveTab('news'); setIsMobileMenuOpen(false); }} language={language} />
+            )}
+            {(adminUser?.role === 'super_admin' || adminUser?.permissions?.includes('analyses')) && (
+              <NavItem active={activeTab === 'analyses'} icon={<FileBarChart />} label={language === 'ar' ? 'إدارة التحليلات' : 'Analyses'} onClick={() => { setActiveTab('analyses'); setIsMobileMenuOpen(false); }} language={language} />
+            )}
+            {(adminUser?.role === 'super_admin' || adminUser?.permissions?.includes('admin_users')) && (
+              <NavItem active={activeTab === 'admin_users'} icon={<Users />} label={language === 'ar' ? 'إدارة الأدمن' : 'Admin Users'} onClick={() => { setActiveTab('admin_users'); setIsMobileMenuOpen(false); }} language={language} />
+            )}
           </div>
-          <div className="space-y-2">
-            <label className="text-sm text-gray-400">القسم / الموضوع</label>
-            <select 
-              value={formData.topic} 
-              onChange={e => setFormData({...formData, topic: e.target.value})} 
-              className="w-full bg-[#0A1128] border border-[#1C2E5A] rounded-xl px-4 py-3 text-white focus:border-[#D4AF37] outline-none"
-            >
-              {topics.map(t => <option key={t.id} value={t.id}>{t.ar}</option>)}
-            </select>
+
+          <div className="mb-6">
+            <p className="text-[9px] font-black text-gray-700 uppercase tracking-[0.3em] mb-4 flex items-center gap-2">
+              <span className="w-1 h-1 rounded-full bg-[#D4AF37]"></span>
+              {language === 'ar' ? 'أدوات' : 'Tools'}
+            </p>
+            {(adminUser?.role === 'super_admin' || adminUser?.permissions?.includes('commodities')) && (
+              <NavItem active={activeTab === 'import_csv'} icon={<FileSpreadsheet />} label={language === 'ar' ? 'استيراد CSV' : 'Import CSV'} onClick={() => { setActiveTab('import_csv'); setIsMobileMenuOpen(false); }} language={language} />
+            )}
           </div>
-          <div className="space-y-2">
-            <label className="text-sm text-gray-400">الحالة</label>
-            <select 
-              value={formData.status} 
-              onChange={e => setFormData({...formData, status: e.target.value})} 
-              className="w-full bg-[#0A1128] border border-[#1C2E5A] rounded-xl px-4 py-3 text-white focus:border-[#D4AF37] outline-none"
-            >
-              <option value="draft">مسودة (حفظ فقط)</option>
-              <option value="published">نشر (سيظهر للمستخدمين)</option>
-            </select>
+
+          <div className="pt-6 border-t border-[#1C2E5A]/50">
+            {(adminUser?.role === 'super_admin' || adminUser?.permissions?.includes('settings')) && (
+                <>
+                <NavItem active={activeTab === 'settings'} icon={<Settings />} label={language === 'ar' ? 'إعدادات المنصة' : 'Settings'} onClick={() => { setActiveTab('settings'); setIsMobileMenuOpen(false); }} language={language} />
+                <NavItem active={activeTab === 'platform_status'} icon={<ShieldAlert />} label={language === 'ar' ? 'فتح وإغلاق المنصة' : 'Platform Status'} onClick={() => { setActiveTab('platform_status'); setIsMobileMenuOpen(false); }} language={language} />
+                </>
+            )}
           </div>
         </div>
-
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-8 mb-8">
-          <div className="space-y-4">
-            <div className="flex items-center justify-between">
-              <label className="text-sm text-gray-400">محتوى التقرير (عربي - Markdown)</label>
-              <button 
-                onClick={() => handleGenerateAI('ar')}
-                disabled={loading}
-                className="text-[10px] bg-purple-500/10 text-purple-400 border border-purple-500/20 px-2 py-1 rounded flex items-center gap-1 hover:bg-purple-500 hover:text-white transition-all disabled:opacity-50"
-              >
-                <Zap size={12} /> {loading ? 'جاري التوليد...' : 'توليد بالذكاء الاصطناعي'}
-              </button>
+        
+        <div className="p-6 border-t border-[#1C2E5A] bg-[#121E3D]/30 shrink-0">
+          <div className="flex items-center gap-3 mb-6 p-3 bg-[#0A1128]/50 rounded-2xl border border-[#1C2E5A]">
+            <img src={user?.photoURL || ''} alt="Admin" className="w-10 h-10 rounded-xl object-cover border border-[#D4AF37]/30" referrerPolicy="no-referrer" />
+            <div className="min-w-0">
+              <p className="text-[10px] font-black text-white truncate uppercase tracking-tight">{user?.displayName}</p>
+              <p className="text-[8px] text-[#D4AF37] font-black uppercase tracking-widest mt-0.5">Super Admin</p>
             </div>
-            <textarea 
-              rows={10} 
-              value={formData.contentAr} 
-              onChange={e => setFormData({...formData, contentAr: e.target.value})} 
-              className="w-full bg-[#0A1128] border border-[#1C2E5A] rounded-xl px-4 py-4 text-white focus:border-[#D4AF37] outline-none font-mono text-sm leading-relaxed"
-            />
           </div>
-          <div className="space-y-4">
-            <div className="flex items-center justify-between">
-              <label className="text-sm text-gray-400">محتوى التقرير (إنجليزي - Markdown)</label>
-              <button 
-                onClick={() => handleGenerateAI('en')}
-                disabled={loading}
-                className="text-[10px] bg-purple-500/10 text-purple-400 border border-purple-500/20 px-2 py-1 rounded flex items-center gap-1 hover:bg-purple-500 hover:text-white transition-all disabled:opacity-50"
-              >
-                <Zap size={12} /> {loading ? 'جاري التوليد...' : 'توليد بالذكاء الاصطناعي'}
-              </button>
-            </div>
-            <textarea 
-              rows={10} 
-              value={formData.contentEn} 
-              onChange={e => setFormData({...formData, contentEn: e.target.value})} 
-              className="w-full bg-[#0A1128] border border-[#1C2E5A] rounded-xl px-4 py-4 text-white focus:border-[#D4AF37] outline-none font-mono text-sm leading-relaxed"
-            />
-          </div>
+          <button 
+            onClick={handleLogout}
+            className="w-full flex items-center justify-center gap-2 bg-red-500/10 hover:bg-red-500/20 text-red-500 font-black py-3.5 rounded-xl transition-all border border-red-500/20 text-[10px] uppercase tracking-widest"
+          >
+            <LogOut size={14} />
+            {t('logout')}
+          </button>
         </div>
+      </aside>
 
-        <button 
-          onClick={handleSave}
-          className="w-full bg-[#D4AF37] text-[#0A1128] font-black py-4 rounded-xl flex items-center justify-center gap-2 hover:bg-[#B5952F] transition-all"
-        >
-          <Save size={20} /> {editingId ? 'تحديث التقرير' : 'حفظ التقرير الجديد'}
-        </button>
-      </div>
+      {/* Main Content Area */}
+      <main className={`flex-1 transition-all duration-300 ${language === 'ar' ? 'lg:mr-72' : 'lg:ml-72'} min-h-screen flex flex-col`}>
+        <header className="h-24 bg-[#0A1128] border-b border-[#1C2E5A] px-10 flex items-center justify-between sticky top-0 z-40 bg-opacity-90 backdrop-blur-md">
+          <div className="flex flex-col">
+            <h1 className="text-2xl font-black text-white uppercase tracking-tighter flex items-center gap-3">
+              <span className="text-[#D4AF37] select-none">/</span>
+              {t(activeTab as any) || activeTab}
+            </h1>
+            <div className="flex items-center gap-2 mt-1">
+              <div className="w-1.5 h-1.5 bg-green-500 rounded-full shadow-[0_0_8px_rgba(34,197,94,0.4)]"></div>
+              <p className="text-[9px] text-gray-500 font-black uppercase tracking-[0.2em]">
+                {language === 'ar' ? 'إدارة المنصة' : 'Management Console'}
+              </p>
+            </div>
+          </div>
 
-      <div className="bg-[#121E3D] border border-[#1C2E5A] rounded-2xl overflow-hidden shadow-2xl">
-        <h4 className="p-6 text-white font-bold border-b border-[#1C2E5A]">التقارير السابقة</h4>
-        <div className="overflow-x-auto">
-          <table className="w-full text-right">
-            <thead className="bg-[#1C2E5A] text-gray-300 text-sm">
-              <tr>
-                <th className="px-6 py-4">اسم التقرير</th>
-                <th className="px-6 py-4">القسم</th>
-                <th className="px-6 py-4">الحالة</th>
-                <th className="px-6 py-4">تاريخ النشر</th>
-                <th className="px-6 py-4 text-center">الإجراءات</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-[#1C2E5A]">
-              {reports.map((report: Report) => (
-                <tr key={report.id} className="hover:bg-[#1C2E5A]/30 transition-colors group">
-                  <td className="px-6 py-4">
-                    <div className="text-white font-bold">{report.titleAr}</div>
-                    <div className="text-gray-500 text-xs">{report.titleEn}</div>
-                  </td>
-                  <td className="px-6 py-4 text-gray-400 text-sm">
-                    {topics.find(t => t.id === report.topic)?.ar}
-                  </td>
-                  <td className="px-6 py-4">
-                    <span className={`px-3 py-1 rounded-full text-xs font-bold ${report.status === 'published' ? 'bg-green-500/10 text-green-500' : 'bg-yellow-500/10 text-yellow-500'}`}>
-                      {report.status === 'published' ? 'منشور' : 'مسودة'}
-                    </span>
-                  </td>
-                  <td className="px-6 py-4 text-gray-500 text-xs">
-                    {report.publishedAt ? safeFormatDate(report.publishedAt) : '-'}
-                  </td>
-                  <td className="px-6 py-4 text-center">
-                    <div className="flex items-center justify-center gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
-                      <button onClick={() => handleEdit(report)} className="p-2 text-blue-400 hover:bg-blue-400/10 rounded-lg">
-                        <Settings size={18} />
+          <div className="flex items-center gap-4">
+            <button 
+              onClick={() => navigate('/')}
+              className="px-6 h-12 flex items-center gap-3 bg-[#121E3D] hover:bg-[#1C2E5A] text-gray-400 hover:text-[#D4AF37] rounded-xl transition-all border border-[#1C2E5A] font-black text-[10px] uppercase tracking-widest shadow-inner shadow-black/20"
+            >
+              <ExternalLink size={16} />
+              <span className="hidden sm:inline">{language === 'ar' ? 'الموقع' : 'Site'}</span>
+            </button>
+          </div>
+        </header>
+
+        <div className="p-10 flex-1">
+          <AnimatePresence mode="wait">
+            <motion.div
+              key={activeTab}
+              initial={{ opacity: 0, y: 15 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: -15 }}
+              transition={{ duration: 0.3, ease: "easeOut" }}
+            >
+              {activeTab === 'dashboard' && <DashboardTab />}
+              {activeTab === 'commodities' && (
+                <div className="space-y-8">
+                  <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-6">
+                    <h3 className="text-xl font-black flex items-center gap-3 text-white uppercase tracking-tight">
+                      <Database className="text-[#D4AF37]" />
+                      {t('manageCommodities')}
+                    </h3>
+                    <div className="flex flex-wrap items-center gap-3 w-full md:w-auto">
+                      <div className="relative flex-1 md:w-64">
+                        <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-500" size={16} />
+                        <input 
+                          type="text" 
+                          placeholder={t('searchCommodity')} 
+                          className="w-full bg-[#121E3D] border border-[#1C2E5A] rounded-xl py-3 pl-10 pr-4 text-sm focus:border-[#D4AF37] outline-none transition-all placeholder:text-gray-600 shadow-inner"
+                          value={commoditySearch}
+                          onChange={(e) => setCommoditySearch(e.target.value)}
+                        />
+                      </div>
+                      <select 
+                        className="bg-[#121E3D] border border-[#1C2E5A] rounded-xl py-3 px-4 text-sm focus:border-[#D4AF37] outline-none transition-all text-white font-bold"
+                        value={sectorFilter}
+                        onChange={(e) => setSectorFilter(e.target.value)}
+                      >
+                        <option value="all">{language === 'ar' ? 'جميع القطاعات' : 'All Sectors'}</option>
+                        {sectors.map(s => (
+                          <option key={s.id} value={s.nameAr}>{language === 'ar' ? s.nameAr : s.nameEn}</option>
+                        ))}
+                      </select>
+                      <select 
+                        className="bg-[#121E3D] border border-[#1C2E5A] rounded-xl py-3 px-4 text-sm focus:border-[#D4AF37] outline-none transition-all text-white font-bold"
+                        value={statusFilter}
+                        onChange={(e) => setStatusFilter(e.target.value)}
+                      >
+                        <option value="all">{language === 'ar' ? 'الكل (الحالة)' : 'All States'}</option>
+                        <option value="visible">{language === 'ar' ? 'مرئي' : 'Visible'}</option>
+                        <option value="hidden">{language === 'ar' ? 'مخفي' : 'Hidden'}</option>
+                      </select>
+                      <button 
+                         onClick={() => setActiveTab('import_csv')}
+                         className="flex items-center gap-2 bg-[#1C2E5A] text-white px-5 py-3 rounded-xl font-black hover:bg-[#25396D] transition-all cursor-pointer text-[10px] uppercase tracking-widest border border-[#2A4075]"
+                       >
+                         <FileSpreadsheet size={18} /> {t('importExcel')}
                       </button>
-                      <button onClick={() => handleDelete(report.id)} className="p-2 text-red-500 hover:bg-red-500/10 rounded-lg">
-                        <Trash2 size={18} />
+                      <button 
+                        onClick={() => setEditingItem({ 
+                          type: 'commodity', 
+                          data: { 
+                            nameAr: '', nameEn: '', symbol: '', sectorAr: sectors[0]?.nameAr || 'الطاقة', sectorEn: sectors[0]?.nameEn || 'Energy', 
+                            price: 0, changePercent: 0, trend: 'neutral', 
+                            high: 0, low: 0, unit: '', source: '', isVisible: true
+                          } 
+                        })}
+                        className="flex items-center gap-2 bg-[#D4AF37] text-[#0A1128] px-5 py-3 rounded-xl font-black hover:bg-[#E5C158] transition-all text-[10px] uppercase tracking-widest shadow-xl shadow-[#D4AF37]/10"
+                      >
+                        <Plus size={18} /> {t('addNew')}
                       </button>
                     </div>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      </div>
-    </div>
-  );
-};
+                  </div>
 
-const NewsTickerSection = ({ news, logAction }: any) => {
-  const [newNews, setNewNews] = useState({ text_ar: '', text_en: '' });
-  const [editingId, setEditingId] = useState<string | null>(null);
-  const [editFormData, setEditFormData] = useState({ text_ar: '', text_en: '' });
-
-  const handleAdd = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!newNews.text_ar || !newNews.text_en) return;
-    try {
-      await addDoc(collection(db, 'news_ticker'), {
-        ...newNews,
-        active: true,
-        createdAt: serverTimestamp()
-      });
-      await logAction('إضافة خبر', `تم إضافة خبر جديد: ${newNews.text_ar}`);
-      setNewNews({ text_ar: '', text_en: '' });
-    } catch (e) {
-      handleFirestoreError(e, OperationType.CREATE, 'news_ticker');
-    }
-  };
-
-  const handleEdit = (item: any) => {
-    setEditingId(item.id);
-    setEditFormData({ text_ar: item.text_ar, text_en: item.text_en });
-  };
-
-  const handleSaveEdit = async () => {
-    if (!editingId) return;
-    try {
-      await updateDoc(doc(db, 'news_ticker', editingId), {
-        text_ar: editFormData.text_ar,
-        text_en: editFormData.text_en
-      });
-      await logAction('تعديل خبر', `تم تعديل الخبر: ${editFormData.text_ar}`);
-      setEditingId(null);
-    } catch (e) {
-      handleFirestoreError(e, OperationType.UPDATE, `news_ticker/${editingId}`);
-    }
-  };
-
-  const toggleActive = async (id: string, current: boolean) => {
-    try {
-      await updateDoc(doc(db, 'news_ticker', id), { active: !current });
-      await logAction('تغيير حالة خبر', `تم تغيير حالة الخبر ${id}`);
-    } catch (e) {
-      handleFirestoreError(e, OperationType.UPDATE, `news_ticker/${id}`);
-    }
-  };
-
-  const handleDelete = async (id: string) => {
-    if (!window.confirm('هل أنت متأكد من حذف هذا الخبر؟')) return;
-    try {
-      await deleteDoc(doc(db, 'news_ticker', id));
-      await logAction('حذف خبر', 'تم حذف خبر من شريط الأخبار');
-    } catch (e) {
-      handleFirestoreError(e, OperationType.DELETE, `news_ticker/${id}`);
-    }
-  };
-
-  return (
-    <div className="space-y-8">
-      <div className="bg-[#121E3D] border border-[#1C2E5A] rounded-2xl p-8 shadow-2xl">
-        <h3 className="text-xl font-bold text-white mb-8 flex items-center gap-3">
-          <Plus className="text-[#D4AF37]" size={24} /> إضافة خبر جديد للشريط
-        </h3>
-        <form onSubmit={handleAdd} className="grid grid-cols-1 md:grid-cols-2 gap-6">
-          <div className="space-y-2">
-            <label className="text-sm text-gray-400">الخبر باللغة العربية</label>
-            <input
-              type="text"
-              value={newNews.text_ar}
-              onChange={(e) => setNewNews({ ...newNews, text_ar: e.target.value })}
-              placeholder="اكتب الخبر هنا..."
-              className="w-full bg-[#0A1128] border border-[#1C2E5A] rounded-xl px-4 py-4 text-white focus:border-[#D4AF37] outline-none transition-all"
-            />
-          </div>
-          <div className="space-y-2">
-            <label className="text-sm text-gray-400">الخبر باللغة الإنجليزية</label>
-            <input
-              type="text"
-              value={newNews.text_en}
-              onChange={(e) => setNewNews({ ...newNews, text_en: e.target.value })}
-              placeholder="News in English..."
-              className="w-full bg-[#0A1128] border border-[#1C2E5A] rounded-xl px-4 py-4 text-white focus:border-[#D4AF37] outline-none transition-all"
-            />
-          </div>
-          <button type="submit" className="md:col-span-2 bg-gradient-to-r from-[#D4AF37] to-[#B5952F] text-[#0A1128] font-black py-4 rounded-xl hover:shadow-lg hover:shadow-[#D4AF37]/20 transition-all transform hover:-translate-y-1 active:scale-95">
-            حفظ ونشر الخبر فوراً
-          </button>
-        </form>
-      </div>
-
-      <div className="bg-[#121E3D] border border-[#1C2E5A] rounded-2xl overflow-hidden shadow-2xl">
-        <table className="w-full text-right">
-          <thead className="bg-[#1C2E5A] text-gray-300 text-sm">
-            <tr>
-              <th className="px-8 py-5">الخبر المنشور</th>
-              <th className="px-8 py-5 text-center">الحالة</th>
-              <th className="px-8 py-5 text-center">الإجراءات</th>
-            </tr>
-          </thead>
-          <tbody className="divide-y divide-[#1C2E5A]">
-            {news.map((item: any) => (
-              <tr key={item.id} className="hover:bg-[#1C2E5A]/30 transition-colors group">
-                {editingId === item.id ? (
-                  <>
-                    <td className="px-8 py-5">
-                      <input type="text" value={editFormData.text_ar} onChange={e => setEditFormData({...editFormData, text_ar: e.target.value})} className="w-full bg-[#0A1128] border border-[#1C2E5A] rounded px-4 py-2 text-white mb-2" placeholder="عربي" />
-                      <input type="text" value={editFormData.text_en} onChange={e => setEditFormData({...editFormData, text_en: e.target.value})} className="w-full bg-[#0A1128] border border-[#1C2E5A] rounded px-4 py-2 text-white" placeholder="English" />
-                    </td>
-                    <td className="px-8 py-5 text-center">
-                      <span className="text-gray-500 text-xs">قيد التعديل</span>
-                    </td>
-                    <td className="px-8 py-5 text-center">
-                      <div className="flex items-center justify-center gap-2">
-                        <button onClick={handleSaveEdit} className="p-2 text-green-400 hover:bg-green-400/10 rounded-lg">
-                          <Save size={20} />
-                        </button>
-                        <button onClick={() => setEditingId(null)} className="p-2 text-gray-400 hover:bg-gray-400/10 rounded-lg">
+                  {importFeedback && (
+                    <motion.div initial={{ opacity: 0, y: -10 }} animate={{ opacity: 1, y: 0 }} className={`p-6 rounded-2xl border ${importFeedback.errors.length > 0 ? 'bg-red-500/10 border-red-500/20' : 'bg-green-500/10 border-green-500/20'}`}>
+                      <div className="flex items-center justify-between mb-4">
+                        <div className="flex items-center gap-3">
+                          {importFeedback.errors.length > 0 ? <AlertTriangle className="text-red-500" /> : <div className="w-2 h-2 rounded-full bg-green-500"></div>}
+                          <h4 className={`text-lg font-black uppercase tracking-tight ${importFeedback.errors.length > 0 ? 'text-red-500' : 'text-green-500'}`}>{importFeedback.message}</h4>
+                        </div>
+                        <button onClick={() => setImportFeedback(null)} className="text-gray-500 hover:text-white transition-all">
                           <X size={20} />
                         </button>
                       </div>
-                    </td>
-                  </>
-                ) : (
-                  <>
-                    <td className="px-8 py-5">
-                      <div className="text-white font-bold mb-1">{item.text_ar}</div>
-                      <div className="text-gray-500 text-xs font-light">{item.text_en}</div>
-                    </td>
-                    <td className="px-8 py-5 text-center">
-                      <button 
-                        onClick={() => toggleActive(item.id, item.active)}
-                        className={`px-4 py-1.5 rounded-full text-xs font-black transition-all ${item.active ? 'bg-green-500/10 text-green-500 border border-green-500/20' : 'bg-red-500/10 text-red-500 border border-red-500/20'}`}
+                      
+                      {importFeedback.errors.length > 0 && (
+                        <div className="mt-4 bg-[#0A1128] rounded-xl p-4 border border-[#1C2E5A] max-h-48 overflow-y-auto custom-scrollbar">
+                          <ul className="space-y-2">
+                            {importFeedback.errors.map((err, i) => (
+                              <li key={i} className="text-sm font-mono text-gray-500 flex items-start gap-2">
+                                <span className="text-red-500 mt-1">•</span> {err}
+                              </li>
+                            ))}
+                          </ul>
+                        </div>
+                      )}
+                    </motion.div>
+                  )}
+                  
+                  <div className="bg-[#0A1128] border border-[#1C2E5A] rounded-[2rem] overflow-hidden shadow-2xl border-white/5">
+                    <div className="overflow-x-auto custom-scrollbar">
+                      <table className="w-full text-right" dir="rtl">
+                        <thead>
+                          <tr className="bg-[#121E3D]/50 text-gray-500 text-[9px] uppercase font-black tracking-[0.2em] border-b border-[#1C2E5A]">
+                            <th className="p-6 text-right font-black uppercase text-[#D4AF37]">{t('commodity')}</th>
+                            <th className="p-6 text-right font-black uppercase">{t('sector')}</th>
+                            <th className="p-6 text-right font-black uppercase">{t('currentPrice')}</th>
+                            <th className="p-6 text-right font-black uppercase">{t('changePercent')}</th>
+                            <th className="p-6 text-center font-black uppercase">{t('actions')}</th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-[#1C2E5A]/50">
+                          {commodities
+                            .filter(item => {
+                              const matchesSearch = 
+                                (language === 'ar' ? item.nameAr : item.nameEn).toLowerCase().includes(commoditySearch.toLowerCase()) ||
+                                item.symbol.toLowerCase().includes(commoditySearch.toLowerCase());
+                              
+                              const matchesSector = sectorFilter === 'all' || item.sectorAr === sectorFilter;
+                              const matchesStatus = statusFilter === 'all' || (statusFilter === 'visible' && item.isVisible) || (statusFilter === 'hidden' && !item.isVisible);
+
+                              return matchesSearch && matchesSector && matchesStatus;
+                            })
+                            .map(item => (
+                            <motion.tr layout key={item.id} className="hover:bg-[#121E3D]/30 transition-colors group">
+                              <td className="p-6">
+                                <div className="font-black text-white uppercase tracking-tight group-hover:text-[#D4AF37] transition-colors">{language === 'ar' ? item.nameAr : item.nameEn}</div>
+                                <div className="text-[10px] text-gray-600 font-bold uppercase tracking-widest mt-1.5">{item.symbol}</div>
+                              </td>
+                              <td className="p-6">
+                                <span className="px-3 py-1 rounded-lg bg-[#1C2E5A] text-[9px] font-black uppercase text-gray-400 border border-[#2A4075] tracking-tighter">
+                                  {language === 'ar' ? item.sectorAr : item.sectorEn}
+                                </span>
+                              </td>
+                              <td className="p-6 font-mono text-sm font-bold text-white tabular-nums">${item.price.toLocaleString()}</td>
+                              <td className="p-6">
+                                <div className={`flex items-center justify-start gap-1.5 font-mono text-xs font-black ${item.trend === 'up' ? 'text-green-500' : item.trend === 'down' ? 'text-red-500' : 'text-gray-500'}`}>
+                                  {item.trend === 'up' ? <TrendingUp size={14} /> : item.trend === 'down' ? <TrendingUp size={14} className="rotate-180" /> : <TrendingUp size={14} className="text-transparent" />}
+                                  {item.changePercent}%
+                                </div>
+                              </td>
+                              <td className="p-6">
+                                <div className="flex items-center justify-center gap-2">
+                                  <button 
+                                    onClick={async () => {
+                                      const { error } = await supabase.from('commodities').update({ is_visible: !item.isVisible }).eq('id', item.id);
+                                      if (error) { console.error(error); alert('Failed to update visibility'); }
+                                    }}
+                                    className={`w-10 h-10 flex items-center justify-center rounded-xl transition-all border ${item.isVisible ? 'text-green-500 hover:bg-green-500/10 border-transparent hover:border-green-500/20' : 'text-gray-500 hover:bg-gray-500/10 border-transparent hover:border-gray-500/20'}`}
+                                  >
+                                    {item.isVisible ? <ToggleRight size={24} /> : <ToggleLeft size={24} />}
+                                  </button>
+                                  <button onClick={() => setEditingItem({ type: 'commodity', data: item })} className="w-10 h-10 flex items-center justify-center text-blue-400 hover:bg-blue-400/10 rounded-xl transition-all border border-transparent hover:border-blue-400/20"><Settings size={18} /></button>
+                                  <button onClick={async () => { if(confirm(t('areYouSure'))) { 
+                                    const { error } = await supabase.from('commodities').delete().eq('id', item.id);
+                                    if (error) { console.error(error); alert('Failed to delete'); }
+                                  } }} className="w-10 h-10 flex items-center justify-center text-red-500 hover:bg-red-500/10 rounded-xl transition-all border border-transparent hover:border-red-500/20"><Trash2 size={18} /></button>
+                                </div>
+                              </td>
+                            </motion.tr>
+                          ))}
+                          
+                          {commodities.filter(item => {
+                            const matchesSearch = 
+                              (language === 'ar' ? item.nameAr : item.nameEn).toLowerCase().includes(commoditySearch.toLowerCase()) ||
+                              item.symbol.toLowerCase().includes(commoditySearch.toLowerCase());
+                            const matchesSector = sectorFilter === 'all' || item.sectorAr === sectorFilter;
+                            const matchesStatus = statusFilter === 'all' || (statusFilter === 'visible' && item.isVisible) || (statusFilter === 'hidden' && !item.isVisible);
+                            return matchesSearch && matchesSector && matchesStatus;
+                          }).length === 0 && (
+                            <tr>
+                              <td colSpan={5} className="p-16 text-center">
+                                <div className="inline-flex flex-col items-center justify-center gap-4 text-gray-500">
+                                  <Database size={48} className="opacity-20" />
+                                  <p className="font-bold text-lg">{language === 'ar' ? 'لا توجد سلع مطابقة' : 'No commodities found'}</p>
+                                </div>
+                              </td>
+                            </tr>
+                          )}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+                </div>
+              )}
+              {activeTab === 'news' && (
+                <div className="space-y-8">
+                  <div className="flex justify-between items-center bg-[#0A1128] p-8 rounded-[2rem] border border-[#1C2E5A] shadow-xl">
+                    <div className="flex items-center gap-4">
+                      <div className="w-12 h-12 bg-[#D4AF37]/10 rounded-2xl flex items-center justify-center border border-[#D4AF37]/20">
+                        <Newspaper className="text-[#D4AF37]" size={24} />
+                      </div>
+                      <div>
+                        <h3 className="text-xl font-black text-white uppercase tracking-tight">{t('news')}</h3>
+                        <p className="text-[10px] text-gray-500 font-bold uppercase tracking-widest mt-1">{t('manageTickerNews' as any)}</p>
+                      </div>
+                    </div>
+                    <button 
+                      onClick={() => setEditingItem({ 
+                        type: 'news', 
+                        data: { text_ar: '', text_en: '', active: true } 
+                      })}
+                      className="flex items-center gap-2 bg-[#D4AF37] text-[#0A1128] px-6 py-4 rounded-xl font-black hover:bg-[#E5C158] transition-all text-[10px] uppercase tracking-widest shadow-xl shadow-[#D4AF37]/10"
+                    >
+                      <Plus size={18} /> {t('addNews')}
+                    </button>
+                  </div>
+                  
+                  <div className="grid grid-cols-1 gap-4">
+                    {news.length === 0 ? (
+                      <div className="bg-[#0A1128] p-16 rounded-[2rem] border border-[#1C2E5A] flex flex-col items-center justify-center text-gray-500 shadow-xl">
+                        <Newspaper size={48} className="opacity-20 mb-4" />
+                        <p className="font-bold text-lg">{language === 'ar' ? 'لا توجد أخبار' : 'No news found'}</p>
+                      </div>
+                    ) : (
+                      news.map(item => (
+                        <motion.div 
+                          initial={{ opacity: 0, x: -20 }}
+                          animate={{ opacity: 1, x: 0 }}
+                          key={item.id} 
+                          className="bg-[#0A1128] p-6 rounded-[2rem] border border-[#1C2E5A] flex items-center justify-between group hover:border-[#D4AF37]/30 transition-all shadow-lg"
+                        >
+                        <div className="flex-1 text-right rtl:text-right ltr:text-left flex items-start gap-4">
+                           <div className={`w-3 h-3 rounded-full mt-2 shrink-0 ${item.active ? 'bg-green-500 shadow-lg shadow-green-500/20' : 'bg-gray-700'}`}></div>
+                           <div className="flex-1 min-w-0">
+                            <div className="text-white font-black text-lg uppercase tracking-tight mb-1 group-hover:text-[#D4AF37] transition-colors line-clamp-2">{item.text_ar}</div>
+                            <div className="text-gray-500 text-[10px] font-bold uppercase italic tracking-wide">{item.text_en}</div>
+                           </div>
+                        </div>
+                        <div className="flex items-center gap-4 mr-4">
+                          <button 
+                            onClick={async () => {
+                              const newStatus = item.active ? 'hidden' : 'published';
+                              const { error } = await supabase.from('news').update({ status: newStatus }).eq('id', item.id);
+                              if (error) console.error(error);
+                            }}
+                            className={`w-12 h-12 flex items-center justify-center rounded-2xl transition-all border ${item.active ? 'text-green-500 bg-green-500/5 border-green-500/20' : 'text-gray-500 bg-gray-500/5 border-gray-500/20'}`}
+                          >
+                            {item.active ? <ToggleRight size={28} /> : <ToggleLeft size={28} />}
+                          </button>
+                          <button onClick={() => setEditingItem({ type: 'news', data: item })} className="w-12 h-12 flex items-center justify-center bg-[#121E3D] text-blue-400 border border-[#1C2E5A] rounded-2xl hover:border-blue-400/30 transition-all"><Settings size={18} /></button>
+                          <button 
+                             onClick={async () => {
+                              if(confirm(t('deleteNewsConfirm'))) {
+                                const { error } = await supabase.from('news').delete().eq('id', item.id);
+                                if (error) console.error(error);
+                              }
+                            }}
+                            className="w-12 h-12 flex items-center justify-center text-red-500 hover:bg-red-500/10 rounded-2xl transition-all border border-transparent hover:border-red-500/20"
+                          >
+                            <Trash2 size={20} />
+                          </button>
+                        </div>
+                      </motion.div>
+                      ))
+                    )}
+                  </div>
+                </div>
+              )}
+              {activeTab === 'analyses' && (
+                <div className="space-y-8">
+                  <div className="flex justify-between items-center bg-[#0A1128] p-8 rounded-[2rem] border border-[#1C2E5A] shadow-xl">
+                    <div className="flex items-center gap-4">
+                      <div className="w-12 h-12 bg-[#D4AF37]/10 rounded-2xl flex items-center justify-center border border-[#D4AF37]/20">
+                        <FileBarChart className="text-[#D4AF37]" size={24} />
+                      </div>
+                      <div>
+                        <h3 className="text-xl font-black text-white uppercase tracking-tight">{language === 'ar' ? 'إدارة التحليلات' : 'Analyses Management'}</h3>
+                        <p className="text-[10px] font-bold text-gray-500 uppercase tracking-widest mt-1">
+                          {language === 'ar' ? 'التحليلات قريباً' : 'Analyses Coming Soon'}
+                        </p>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              )}
+               
+              {activeTab === 'messages' && (
+                <div className="space-y-8">
+                  <div className="flex justify-between items-center bg-[#0A1128] p-8 rounded-[2rem] border border-[#1C2E5A] shadow-xl">
+                    <div className="flex items-center gap-4">
+                      <div className="w-12 h-12 bg-[#D4AF37]/10 rounded-2xl flex items-center justify-center border border-[#D4AF37]/20">
+                        <MessageSquare className="text-[#D4AF37]" size={24} />
+                      </div>
+                      <div>
+                        <h3 className="text-xl font-black text-white uppercase tracking-tight">{t('userInquiries')}</h3>
+                        <p className="text-[10px] text-gray-500 font-bold uppercase tracking-widest mt-1">{t('manageCustomerMessages' as any)}</p>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-1 gap-6">
+                    {messages.map(msg => (
+                      <motion.div 
+                        initial={{ opacity: 0, y: 15 }}
+                        animate={{ opacity: 1, y: 0 }}
+                        key={msg.id} 
+                        className={`bg-[#0A1128] p-8 rounded-[2rem] border transition-all shadow-2xl relative overflow-hidden group ${msg.read ? 'border-[#1C2E5A]' : 'border-[#D4AF37]/50 ring-1 ring-[#D4AF37]/20'}`}
                       >
-                        {item.active ? 'نشط الآن' : 'متوقف'}
-                      </button>
-                    </td>
-                    <td className="px-8 py-5 text-center">
-                      <div className="flex items-center justify-center gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
-                        <button onClick={() => handleEdit(item)} className="p-2 text-blue-400 hover:bg-blue-400/10 rounded-xl transition-all">
-                          <Settings size={20} />
-                        </button>
-                        <button onClick={() => handleDelete(item.id)} className="p-2 text-red-500 hover:bg-red-500/10 rounded-xl transition-all">
-                          <Trash2 size={20} />
+                        {!msg.read && <div className="absolute top-0 right-0 w-24 h-24 bg-[#D4AF37]/5 rounded-bl-[100%] pointer-events-none"></div>}
+                        
+                        <div className="flex justify-between items-start mb-6">
+                          <div className="flex items-center gap-4">
+                            <div className="w-12 h-12 bg-[#121E3D] rounded-2xl flex items-center justify-center border border-[#1C2E5A] group-hover:border-[#D4AF37]/30 transition-all">
+                              <User className="text-gray-400 group-hover:text-[#D4AF37]" size={20} />
+                            </div>
+                            <div>
+                              <h4 className="text-white font-black text-lg tracking-tight uppercase">{msg.name}</h4>
+                              <p className="text-[10px] text-gray-600 font-black tracking-widest uppercase mt-0.5">{msg.email}</p>
+                            </div>
+                          </div>
+                          <div className="text-right">
+                            <span className="text-[10px] text-gray-500 font-black uppercase tracking-widest block mb-1">
+                              {msg.createdAt?.toDate().toLocaleDateString()}
+                            </span>
+                            <span className="text-[9px] text-[#D4AF37] font-black uppercase tracking-widest px-2 py-1 bg-[#D4AF37]/5 rounded border border-[#D4AF37]/10">
+                              {msg.subject}
+                            </span>
+                          </div>
+                        </div>
+                        
+                        <div className="p-6 bg-[#050A18] rounded-2xl border border-[#1C2E5A]/50 text-gray-300 leading-relaxed text-sm italic relative">
+                          <div className="absolute top-4 right-4 opacity-5 pointer-events-none uppercase font-black text-6xl select-none">MSG</div>
+                          {msg.message}
+                        </div>
+                        
+                        <div className="flex justify-end gap-3 mt-6">
+                          {!msg.read && (
+                            <button onClick={async () => await updateDoc(doc(db, 'messages', msg.id), { read: true })} className="px-5 py-2.5 bg-[#D4AF37] text-[#0A1128] text-[10px] uppercase font-black tracking-widest rounded-xl hover:bg-[#E5C158] transition-all shadow-lg shadow-[#D4AF37]/10">{t('markAsRead')}</button>
+                          )}
+                          <button onClick={async () => { if(confirm(t('areYouSure'))) await deleteDoc(doc(db, 'messages', msg.id)); }} className="px-5 py-2.5 bg-red-500/10 text-red-500 border border-red-500/20 text-[10px] uppercase font-black tracking-widest rounded-xl hover:bg-red-500/20 transition-all">{t('delete')}</button>
+                        </div>
+                      </motion.div>
+                    ))}
+                    {messages.length === 0 && (
+                      <div className="text-center py-20 bg-[#0A1128] rounded-[2.5rem] border border-[#1C2E5A] border-dashed">
+                        <MessageSquare className="mx-auto text-gray-700 mb-4" size={48} />
+                        <p className="text-gray-500 uppercase tracking-[0.3em] font-black text-xs">{t('noMessages' as any)}</p>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              )}
+              {activeTab === 'import_csv' && (
+                <div className="bg-[#0A1128] p-10 rounded-3xl border border-[#1C2E5A] shadow-2xl relative overflow-hidden">
+                   <div className="absolute top-0 left-0 w-full h-1 bg-gradient-to-r from-transparent via-[#D4AF37]/50 to-transparent"></div>
+                   <h3 className="text-2xl font-black mb-10 flex items-center gap-4 text-white uppercase tracking-tighter">
+                    <FileSpreadsheet className="text-[#D4AF37]" size={28} />
+                    {language === 'ar' ? 'استيراد السلع والأسعار عبر ملف إكسل' : 'Import Commodities via Excel'}
+                  </h3>
+
+                  <div className="max-w-2xl mx-auto space-y-8">
+                    {!importConfig.file ? (
+                      <div className="bg-[#121E3D] p-10 rounded-[2rem] border-2 border-dashed border-[#1C2E5A] text-center hover:bg-[#121E3D]/80 transition-all cursor-pointer" onClick={() => document.getElementById('csv-upload')?.click()}>
+                        <div className="w-20 h-20 bg-[#0A1128] rounded-full flex items-center justify-center mx-auto mb-6">
+                           <FileSpreadsheet size={32} className="text-[#D4AF37]" />
+                        </div>
+                        <h4 className="text-xl font-black text-white uppercase tracking-tight mb-2">
+                           {language === 'ar' ? 'قم برفع ملف Excel أو CSV' : 'Upload Excel or CSV file'}
+                        </h4>
+                        <p className="text-gray-500 font-bold text-sm mb-8">
+                          {language === 'ar' ? 'يجب أن يحتوي الملف على الأعمدة (مطلوب: nameEn, price, symbol | اختياري: nameAr, sectorAr, sectorEn, currency, isVisible)' : 'File should contain columns (required: nameEn, price, symbol | optional: nameAr, sectorAr, sectorEn, currency, isVisible)'}
+                        </p>
+                        <input id="csv-upload" type="file" accept=".xlsx, .xls, .csv" className="hidden" onChange={(e) => {
+                          const file = e.target.files?.[0];
+                          if (file) setImportConfig({ ...importConfig, file });
+                          e.target.value = '';
+                        }} />
+                        <button className="bg-[#D4AF37] text-[#0A1128] px-8 py-3 rounded-xl font-black uppercase tracking-widest text-sm hover:bg-[#E5C158] transition-all shadow-xl shadow-[#D4AF37]/10">
+                          {language === 'ar' ? 'اختيار ملف' : 'Select File'}
                         </button>
                       </div>
-                    </td>
-                  </>
-                )}
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
-    </div>
-  );
-};
+                    ) : (
+                      <div className="bg-[#121E3D]/50 p-8 rounded-3xl border border-[#1C2E5A]">
+                        <div className="flex items-center justify-between mb-8 pb-6 border-b border-[#1C2E5A]">
+                          <div className="flex items-center gap-4">
+                            <div className="w-12 h-12 bg-[#0A1128] rounded-xl flex items-center justify-center border border-[#1C2E5A]">
+                              <FileSpreadsheet size={24} className="text-[#D4AF37]" />
+                            </div>
+                            <div>
+                               <p className="font-black text-white">{importConfig.file.name}</p>
+                               <p className="text-[10px] text-gray-500 font-bold uppercase tracking-widest mt-1">{(importConfig.file.size / 1024).toFixed(2)} KB</p>
+                            </div>
+                          </div>
+                          <button onClick={() => setImportConfig({...importConfig, file: null})} className="text-gray-500 hover:text-red-500 transition-colors p-2 bg-[#0A1128] rounded-lg border border-[#1C2E5A]">
+                            <X size={16} />
+                          </button>
+                        </div>
+                        
+                        <p className="text-gray-400 text-sm mb-6">
+                          {language === 'ar' ? 'حدد الإعدادات الافتراضية التي سيتم تطبيقها على السلع في حال كانت غير محددة في ملف الإكسل.' : 'Select default settings to be applied if missing in the Excel file.'}
+                        </p>
+                        <div className="space-y-4 text-right">
+                          <div className="space-y-2">
+                            <label className="text-[10px] font-black text-gray-500 uppercase tracking-widest">{language === 'ar' ? 'القطاع (الافتراضي AR)' : 'Sector (Default AR)'}</label>
+                            <select 
+                              className="w-full bg-[#121E3D] border border-[#1C2E5A] rounded-2xl p-4 text-white focus:border-[#D4AF37] outline-none hover:bg-[#1C2E5A] transition-all font-bold appearance-none"
+                              value={importConfig.sectorAr}
+                              onChange={e => setImportConfig({...importConfig, sectorAr: e.target.value})}
+                            >
+                              <option value="">{language === 'ar' ? '-- اختر القطاع --' : '-- Select Sector --'}</option>
+                              {sectors.map((s: any) => (
+                                <option key={s.id} value={s.nameAr}>{s.nameAr}</option>
+                              ))}
+                            </select>
+                          </div>
+                          <div className="space-y-2">
+                            <label className="text-[10px] font-black text-gray-500 uppercase tracking-widest">{language === 'ar' ? 'القطاع (الافتراضي EN)' : 'Sector (Default EN)'}</label>
+                            <select 
+                              className="w-full bg-[#121E3D] border border-[#1C2E5A] rounded-2xl p-4 text-white focus:border-[#D4AF37] outline-none hover:bg-[#1C2E5A] transition-all font-bold appearance-none"
+                              value={importConfig.sectorEn}
+                              onChange={e => setImportConfig({...importConfig, sectorEn: e.target.value})}
+                            >
+                              <option value="">{language === 'ar' ? '-- اختر القطاع --' : '-- Select Sector --'}</option>
+                              {sectors.map((s: any) => (
+                                <option key={s.id} value={s.nameEn}>{s.nameEn}</option>
+                              ))}
+                            </select>
+                          </div>
+                          <div className="space-y-2">
+                            <label className="text-[10px] font-black text-gray-500 uppercase tracking-widest">{language === 'ar' ? 'العملة (الافتراضية)' : 'Currency (Default)'}</label>
+                            <select 
+                              className="w-full bg-[#121E3D] border border-[#1C2E5A] rounded-2xl p-4 text-white focus:border-[#D4AF37] outline-none hover:bg-[#1C2E5A] transition-all font-bold appearance-none"
+                              value={importConfig.currency}
+                              onChange={e => setImportConfig({...importConfig, currency: e.target.value})}
+                            >
+                               <option value="USD">USD - دولار</option>
+                               <option value="EUR">EUR - يورو</option>
+                               <option value="LYD">LYD - دينار ليبي</option>
+                            </select>
+                          </div>
+                        </div>
 
-const SettingsSection = ({ settings, logAction }: any) => {
-  const [formData, setFormData] = useState<any>(settings || {});
-  const [isSaving, setIsSaving] = useState(false);
-
-  const handleSave = async () => {
-    setIsSaving(true);
-    try {
-      await setDoc(doc(db, 'settings', 'global'), formData);
-      await logAction('تحديث الإعدادات', 'تم تحديث إعدادات المنصة العامة بالكامل');
-      alert('تم حفظ كافة التغييرات بنجاح');
-    } catch (e) {
-      handleFirestoreError(e, OperationType.WRITE, 'settings/global');
-    } finally {
-      setIsSaving(false);
-    }
-  };
-
-  return (
-    <div className="space-y-8">
-      <div className="bg-[#121E3D] border border-[#1C2E5A] rounded-2xl p-8 shadow-2xl">
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-12 mb-12">
-          <div className="space-y-6">
-            <h4 className="text-[#D4AF37] font-black text-lg flex items-center gap-3 border-b border-[#1C2E5A] pb-4">
-              <Globe size={22} /> الهوية واللغات
-            </h4>
-            <div className="space-y-4">
-              <div className="space-y-2">
-                <label className="text-sm text-gray-400 font-medium">اسم المنصة (عربي)</label>
-                <input 
-                  type="text" 
-                  value={formData.siteNameAr || ''} 
-                  onChange={e => setFormData({...formData, siteNameAr: e.target.value})}
-                  className="w-full bg-[#0A1128] border border-[#1C2E5A] rounded-xl px-4 py-4 text-white outline-none focus:border-[#D4AF37] transition-all"
-                />
-              </div>
-              <div className="space-y-2">
-                <label className="text-sm text-gray-400 font-medium">اسم المنصة (إنجليزي)</label>
-                <input 
-                  type="text" 
-                  value={formData.siteNameEn || ''} 
-                  onChange={e => setFormData({...formData, siteNameEn: e.target.value})}
-                  className="w-full bg-[#0A1128] border border-[#1C2E5A] rounded-xl px-4 py-4 text-white outline-none focus:border-[#D4AF37] transition-all"
-                />
-              </div>
-              <div className="space-y-2">
-                <label className="text-sm text-gray-400 font-medium">وصف المنصة (عربي)</label>
-                <textarea 
-                  rows={3}
-                  value={formData.descriptionAr || ''} 
-                  onChange={e => setFormData({...formData, descriptionAr: e.target.value})}
-                  className="w-full bg-[#0A1128] border border-[#1C2E5A] rounded-xl px-4 py-4 text-white outline-none focus:border-[#D4AF37] transition-all resize-none"
-                />
-              </div>
-              <div className="space-y-2">
-                <label className="text-sm text-gray-400 font-medium">وصف المنصة (إنجليزي)</label>
-                <textarea 
-                  rows={3}
-                  value={formData.descriptionEn || ''} 
-                  onChange={e => setFormData({...formData, descriptionEn: e.target.value})}
-                  className="w-full bg-[#0A1128] border border-[#1C2E5A] rounded-xl px-4 py-4 text-white outline-none focus:border-[#D4AF37] transition-all resize-none"
-                />
-              </div>
-            </div>
-          </div>
-
-          <div className="space-y-6">
-            <h4 className="text-[#D4AF37] font-black text-lg flex items-center gap-3 border-b border-[#1C2E5A] pb-4">
-              <Shield size={22} /> الأمان والروابط
-            </h4>
-            <div className="space-y-4">
-              <div className="flex items-center justify-between p-4 bg-[#1C2E5A]/30 border border-[#1C2E5A] rounded-xl hover:border-[#D4AF37]/50 transition-all">
-                <div>
-                  <h5 className="text-white font-bold mb-1">حالة المنصة (تشغيل / إيقاف)</h5>
-                  <p className="text-xs text-gray-400">عند الإيقاف سيتم عرض صفحة "تحت الصيانة" للزوار</p>
+                        <button 
+                          onClick={processExcelImport}
+                          className="w-full bg-[#D4AF37] text-[#0A1128] font-black uppercase tracking-widest py-4 rounded-xl hover:bg-[#E5C158] transition-all mt-8 shadow-xl shadow-[#D4AF37]/10"
+                        >
+                          {language === 'ar' ? 'تأكيد واستيراد' : 'Confirm & Import'}
+                        </button>
+                      </div>
+                    )}
+                  </div>
                 </div>
-                <button 
-                  type="button"
-                  onClick={() => {
-                    const currentState = formData.isSiteActive !== false; // defaults to true if undefined
-                    setFormData({...formData, isSiteActive: !currentState});
-                  }}
-                  className={`text-3xl transition-colors ${formData.isSiteActive !== false ? 'text-[#D4AF37]' : 'text-gray-500'}`}
-                >
-                  {formData.isSiteActive !== false ? <ToggleRight size={36} /> : <ToggleLeft size={36} />}
-                </button>
-              </div>
+              )}
+              {activeTab === 'settings' && (
+                <div className="bg-[#0A1128] p-10 rounded-3xl border border-[#1C2E5A] shadow-2xl relative overflow-hidden">
+                   <div className="absolute top-0 left-0 w-full h-1 bg-gradient-to-r from-transparent via-[#D4AF37]/50 to-transparent"></div>
+                   <h3 className="text-2xl font-black mb-10 flex items-center gap-4 text-white uppercase tracking-tighter">
+                    <Settings className="text-[#D4AF37]" size={28} />
+                    {t('platformSettings')}
+                  </h3>
+                  {siteSettings && (
+                    <div className="space-y-10">
+                      {/* Branding Section */}
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
+                        <div className="md:col-span-2">
+                          <h4 className="text-[#D4AF37] text-xs font-black uppercase tracking-[0.3em] mb-6 flex items-center gap-2">
+                            <ImageIcon size={14} /> {t('branding')}
+                          </h4>
+                        </div>
+                        <div className="space-y-3">
+                          <label className="block text-[10px] font-black text-gray-500 uppercase tracking-[0.2em]">{t('siteNameAr')}</label>
+                          <input className="w-full bg-[#121E3D] border border-[#1C2E5A] rounded-2xl p-4 text-white focus:border-[#D4AF37] outline-none hover:bg-[#1C2E5A]/50 transition-all font-bold" 
+                            value={siteSettings.siteNameAr || ''} onChange={(e) => setSiteSettings({...siteSettings, siteNameAr: e.target.value})} />
+                        </div>
+                        <div className="space-y-3">
+                          <label className="block text-[10px] font-black text-gray-500 uppercase tracking-[0.2em]">{t('siteNameEn')}</label>
+                          <input className="w-full bg-[#121E3D] border border-[#1C2E5A] rounded-2xl p-4 text-white focus:border-[#D4AF37] outline-none hover:bg-[#1C2E5A]/50 transition-all font-bold" 
+                            value={siteSettings.siteNameEn || ''} onChange={(e) => setSiteSettings({...siteSettings, siteNameEn: e.target.value})} />
+                        </div>
+                        <div className="space-y-3">
+                          <label className="block text-[10px] font-black text-gray-500 uppercase tracking-[0.2em]">{t('descriptionAr')}</label>
+                          <textarea className="w-full bg-[#121E3D] border border-[#1C2E5A] rounded-2xl p-4 text-white focus:border-[#D4AF37] outline-none hover:bg-[#1C2E5A]/50 transition-all font-bold h-24" 
+                            value={siteSettings.descriptionAr || ''} onChange={(e) => setSiteSettings({...siteSettings, descriptionAr: e.target.value})} />
+                        </div>
+                        <div className="space-y-3">
+                          <label className="block text-[10px] font-black text-gray-500 uppercase tracking-[0.2em]">{t('descriptionEn')}</label>
+                          <textarea className="w-full bg-[#121E3D] border border-[#1C2E5A] rounded-2xl p-4 text-white focus:border-[#D4AF37] outline-none hover:bg-[#1C2E5A]/50 transition-all font-bold h-24 italic" 
+                            value={siteSettings.descriptionEn || ''} onChange={(e) => setSiteSettings({...siteSettings, descriptionEn: e.target.value})} />
+                        </div>
+                        <div className="md:col-span-2 space-y-3">
+                          <label className="block text-[10px] font-black text-gray-500 uppercase tracking-[0.2em]">{t('siteLogo')}</label>
+                          <div className="flex gap-4">
+                            <input className="flex-1 bg-[#121E3D] border border-[#1C2E5A] rounded-2xl p-4 text-white focus:border-[#D4AF37] outline-none hover:bg-[#1C2E5A]/50 transition-all font-bold" 
+                              value={siteSettings.siteLogo || ''} onChange={(e) => setSiteSettings({...siteSettings, siteLogo: e.target.value})} />
+                            {siteSettings.siteLogo && (
+                              <div className="w-16 h-16 bg-[#121E3D] rounded-2xl border border-[#1C2E5A] flex items-center justify-center p-2">
+                                <img src={siteSettings.siteLogo} alt="Preview" className="max-w-full max-h-full object-contain" />
+                              </div>
+                            )}
+                          </div>
+                        </div>
+                      </div>
 
-              <div className="space-y-2 pt-2">
-                <label className="text-sm text-gray-400 font-medium">رابط لوحة التحكم السري</label>
-                <input 
-                  type="text" 
-                  value={formData.adminPath || '/admin-portal-secret-access-2024'} 
-                  onChange={e => setFormData({...formData, adminPath: e.target.value})}
-                  className="w-full bg-[#0A1128] border border-[#1C2E5A] rounded-xl px-4 py-4 text-white outline-none focus:border-[#D4AF37] transition-all"
-                />
-                <p className="text-xs text-gray-500 font-light">يجب أن يبدأ الرابط بـ / (مثال: /my-secret-admin)</p>
-              </div>
-              
-              <div className="space-y-2 pt-4">
-                <label className="text-sm text-gray-400 font-medium">رابط الشعار (Logo URL)</label>
-                <input 
-                  type="text" 
-                  value={formData.logoUrl || ''} 
-                  onChange={e => setFormData({...formData, logoUrl: e.target.value})}
-                  className="w-full bg-[#0A1128] border border-[#1C2E5A] rounded-xl px-4 py-4 text-white outline-none focus:border-[#D4AF37] transition-all"
-                />
-              </div>
+                      {/* Contact Info Section */}
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-8 pt-8 border-t border-[#1C2E5A]/50">
+                        <div className="md:col-span-2">
+                          <h4 className="text-[#D4AF37] text-xs font-black uppercase tracking-[0.3em] mb-6 flex items-center gap-2">
+                            <Mail size={14} /> {t('contactDetails')}
+                          </h4>
+                        </div>
+                        <div className="space-y-3">
+                          <label className="block text-[10px] font-black text-gray-500 uppercase tracking-[0.2em]">{t('contactEmail')}</label>
+                          <input className="w-full bg-[#121E3D] border border-[#1C2E5A] rounded-2xl p-4 text-white focus:border-[#D4AF37] outline-none hover:bg-[#1C2E5A]/50 transition-all font-bold" 
+                            value={siteSettings.contactEmail || ''} onChange={(e) => setSiteSettings({...siteSettings, contactEmail: e.target.value})} />
+                        </div>
+                        <div className="space-y-3">
+                          <label className="block text-[10px] font-black text-gray-500 uppercase tracking-[0.2em]">{t('contactPhone')}</label>
+                          <input className="w-full bg-[#121E3D] border border-[#1C2E5A] rounded-2xl p-4 text-white focus:border-[#D4AF37] outline-none hover:bg-[#1C2E5A]/50 transition-all font-bold" 
+                            value={siteSettings.contactPhone || ''} onChange={(e) => setSiteSettings({...siteSettings, contactPhone: e.target.value})} />
+                        </div>
+                        <div className="space-y-3">
+                          <label className="block text-[10px] font-black text-gray-500 uppercase tracking-[0.2em]">{t('contactAddressAr')}</label>
+                          <input className="w-full bg-[#121E3D] border border-[#1C2E5A] rounded-2xl p-4 text-white focus:border-[#D4AF37] outline-none hover:bg-[#1C2E5A]/50 transition-all font-bold" 
+                            value={siteSettings.contactAddressAr || ''} onChange={(e) => setSiteSettings({...siteSettings, contactAddressAr: e.target.value})} />
+                        </div>
+                        <div className="space-y-3">
+                          <label className="block text-[10px] font-black text-gray-500 uppercase tracking-[0.2em]">{t('contactAddressEn')}</label>
+                          <input className="w-full bg-[#121E3D] border border-[#1C2E5A] rounded-2xl p-4 text-white focus:border-[#D4AF37] outline-none hover:bg-[#1C2E5A]/50 transition-all font-bold" 
+                            value={siteSettings.contactAddressEn || ''} onChange={(e) => setSiteSettings({...siteSettings, contactAddressEn: e.target.value})} />
+                        </div>
+                      </div>
 
-              <div className="space-y-2 pt-4">
-                <label className="text-sm text-gray-400 font-medium">Gemini AI API Key (مفتاح الذكاء الاصطناعي)</label>
-                <div className="relative group/key">
-                  <input 
-                    type="password" 
-                    value={formData.geminiApiKey || ''} 
-                    onChange={e => setFormData({...formData, geminiApiKey: e.target.value})}
-                    placeholder="أدخل مفتاح خاص بك هنا..."
-                    className="w-full bg-[#0A1128] border border-[#1C2E5A] rounded-xl px-4 py-4 text-white outline-none focus:border-[#D4AF37] transition-all group-hover/key:border-[#D4AF37]/50"
-                  />
-                  <Zap className="absolute left-4 top-1/2 -translate-y-1/2 text-gray-500 group-hover/key:text-[#D4AF37] transition-colors" size={18} />
-                </div>
-                <p className="text-[10px] text-gray-400 flex items-center gap-1 mt-1">
-                  <span>يمكنك الحصول على مفتاح مجاني من: </span>
-                  <a href="https://aistudio.google.com/app/apikey" target="_blank" rel="noopener noreferrer" className="text-[#D4AF37] hover:underline">Google AI Studio</a>
-                </p>
-              </div>
-            </div>
+                      {/* Social Links Section */}
+                      <div className="grid grid-cols-1 md:grid-cols-3 gap-8 pt-8 border-t border-[#1C2E5A]/50">
+                        <div className="md:col-span-3">
+                          <h4 className="text-[#D4AF37] text-xs font-black uppercase tracking-[0.3em] mb-6 flex items-center gap-2">
+                            <Zap size={14} /> {t('socialLinks')}
+                          </h4>
+                        </div>
+                        <div className="space-y-3">
+                          <label className="block text-[10px] font-black text-gray-500 uppercase tracking-[0.2em]">{t('facebookUrl')}</label>
+                          <input className="w-full bg-[#121E3D] border border-[#1C2E5A] rounded-2xl p-4 text-white focus:border-[#D4AF37] outline-none hover:bg-[#1C2E5A]/50 transition-all font-bold" 
+                            value={siteSettings.facebookUrl || ''} onChange={(e) => setSiteSettings({...siteSettings, facebookUrl: e.target.value})} />
+                        </div>
+                        <div className="space-y-3">
+                          <label className="block text-[10px] font-black text-gray-500 uppercase tracking-[0.2em]">{t('twitterUrl')}</label>
+                          <input className="w-full bg-[#121E3D] border border-[#1C2E5A] rounded-2xl p-4 text-white focus:border-[#D4AF37] outline-none hover:bg-[#1C2E5A]/50 transition-all font-bold" 
+                            value={siteSettings.twitterUrl || ''} onChange={(e) => setSiteSettings({...siteSettings, twitterUrl: e.target.value})} />
+                        </div>
+                        <div className="space-y-3">
+                          <label className="block text-[10px] font-black text-gray-500 uppercase tracking-[0.2em]">{t('linkedinUrl')}</label>
+                          <input className="w-full bg-[#121E3D] border border-[#1C2E5A] rounded-2xl p-4 text-white focus:border-[#D4AF37] outline-none hover:bg-[#1C2E5A]/50 transition-all font-bold" 
+                            value={siteSettings.linkedinUrl || ''} onChange={(e) => setSiteSettings({...siteSettings, linkedinUrl: e.target.value})} />
+                        </div>
+                      </div>
 
-            <h4 className="text-[#D4AF37] font-black text-lg flex items-center gap-3 border-b border-[#1C2E5A] pb-4 pt-4">
-              <TrendingUp size={22} /> التواصل الاجتماعي
-            </h4>
-            <div className="grid grid-cols-2 gap-4">
-              <input 
-                placeholder="Facebook"
-                value={formData.socialLinks?.facebook || ''} 
-                onChange={e => setFormData({...formData, socialLinks: {...formData.socialLinks, facebook: e.target.value}})}
-                className="bg-[#0A1128] border border-[#1C2E5A] rounded-xl px-4 py-3 text-white outline-none focus:border-[#D4AF37] transition-all"
-              />
-              <input 
-                placeholder="Twitter"
-                value={formData.socialLinks?.twitter || ''} 
-                onChange={e => setFormData({...formData, socialLinks: {...formData.socialLinks, twitter: e.target.value}})}
-                className="bg-[#0A1128] border border-[#1C2E5A] rounded-xl px-4 py-3 text-white outline-none focus:border-[#D4AF37] transition-all"
-              />
-            </div>
+                      <button 
+                        onClick={async () => {
+                          await setDoc(doc(db, 'settings', 'global'), siteSettings);
+                          alert(t('settingsSaved'));
+                          logUserActivity('تحديث الإعدادات', 'تم تحديث إعدادات المنصة بالكامل');
+                        }}
+                        className="w-full flex items-center justify-center gap-3 bg-[#D4AF37] text-[#0A1128] font-black py-5 rounded-2xl hover:bg-[#E5C158] transition-all shadow-xl shadow-[#D4AF37]/10 text-sm uppercase tracking-widest"
+                      >
+                        <Save size={20} /> {t('updateConfig')}
+                      </button>
+                    </div>
+                  )}
+                </div>
+              )}
+              {activeTab === 'platform_status' && (
+                <div className="bg-[#0A1128] p-10 rounded-3xl border border-[#1C2E5A] shadow-2xl relative overflow-hidden">
+                   <div className="absolute top-0 left-0 w-full h-1 bg-gradient-to-r from-transparent via-red-500/50 to-transparent"></div>
+                   <h3 className="text-2xl font-black mb-10 flex items-center gap-4 text-white uppercase tracking-tighter">
+                    <ShieldAlert className="text-red-500" size={28} />
+                    {language === 'ar' ? 'فتح وإغلاق المنصة' : 'Platform Status'}
+                  </h3>
+                  {siteSettings && (
+                    <div className="space-y-8">
+                       <div className="bg-[#121E3D]/50 p-8 rounded-3xl border border-[#1C2E5A]">
+                          <div className="flex items-center justify-between mb-8 pb-8 border-b border-[#1C2E5A]/50">
+                            <div className="flex items-center gap-6">
+                              <div className={`w-16 h-16 rounded-2xl flex items-center justify-center border ${siteSettings.isSiteActive ? 'bg-green-500/10 border-green-500/20' : 'bg-red-500/10 border-red-500/20'}`}>
+                                <Globe className={siteSettings.isSiteActive ? 'text-green-500' : 'text-red-500'} size={32} />
+                              </div>
+                              <div>
+                                <p className="text-xl font-black text-white uppercase tracking-tight">{t('platformActive')}</p>
+                                <p className="text-sm text-gray-500 font-bold uppercase mt-1">{t('controlPublicAccess')}</p>
+                              </div>
+                            </div>
+                            <button onClick={async () => {
+                              const newActive = !siteSettings.isSiteActive;
+                              const updatedSettings = { ...siteSettings, isSiteActive: newActive };
+                              setSiteSettings(updatedSettings);
+                              
+                              const statusValue = newActive ? 'open' : 'maintenance';
+                              const { error } = await supabase
+                                .from('platform_settings')
+                                .upsert({ key: 'platform_status', value: statusValue }, { onConflict: 'key' });
+                                
+                              if (error) {
+                                console.error('Error updating platform status in Supabase:', error);
+                              }
+                              
+                              await setDoc(doc(db, 'settings', 'global'), updatedSettings);
+                              logUserActivity('تحديث حالة المنصة', `تم ${newActive ? 'فتح' : 'إغلاق'} المنصة`);
+                            }} className={`transition-transform hover:scale-110 active:scale-95 ${siteSettings.isSiteActive ? 'text-green-500 drop-shadow-[0_0_10px_rgba(34,197,94,0.3)]' : 'text-red-500 drop-shadow-[0_0_10px_rgba(239,68,68,0.3)]'}`}>
+                              {siteSettings.isSiteActive ? <ToggleRight size={80}/> : <ToggleLeft size={80}/>}
+                            </button>
+                          </div>
+                          
+                          <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
+                            <div className="space-y-3">
+                              <label className="block text-[10px] font-black text-gray-500 uppercase tracking-[0.2em]">{t('maintenanceMessageAr')}</label>
+                              <textarea className="w-full bg-[#121E3D] border border-[#1C2E5A] rounded-2xl p-6 text-white focus:border-red-500 outline-none transition-all font-bold h-32 leading-relaxed" 
+                                value={siteSettings.maintenanceMessageAr || ''} onChange={(e) => setSiteSettings({...siteSettings, maintenanceMessageAr: e.target.value})} />
+                            </div>
+                            <div className="space-y-3">
+                              <label className="block text-[10px] font-black text-gray-500 uppercase tracking-[0.2em]">{t('maintenanceMessageEn')}</label>
+                              <textarea className="w-full bg-[#121E3D] border border-[#1C2E5A] rounded-2xl p-6 text-white focus:border-red-500 outline-none transition-all font-bold h-32 italic leading-relaxed" 
+                                value={siteSettings.maintenanceMessageEn || ''} onChange={(e) => setSiteSettings({...siteSettings, maintenanceMessageEn: e.target.value})} />
+                            </div>
+                          </div>
+                       </div>
+                       
+                       <button 
+                        onClick={async () => {
+                          await setDoc(doc(db, 'settings', 'global'), siteSettings);
+                          alert(t('settingsSaved'));
+                        }}
+                        className="w-full bg-red-500 text-white font-black uppercase tracking-widest py-5 rounded-2xl hover:bg-red-600 transition-all shadow-xl shadow-red-500/10 flex items-center justify-center gap-3"
+                      >
+                        <Save size={20} /> {language === 'ar' ? 'حفظ الرسالة' : 'Save Message'}
+                      </button>
+                    </div>
+                  )}
+                </div>
+              )}
+              {activeTab === 'logs' && (
+                <div className="space-y-8">
+                  <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-6">
+                    <div className="flex items-center gap-4">
+                      <div className="w-12 h-12 bg-[#D4AF37]/10 rounded-2xl flex items-center justify-center border border-[#D4AF37]/20">
+                        <History className="text-[#D4AF37]" size={24} />
+                      </div>
+                      <div>
+                        <h3 className="text-xl font-black text-white uppercase tracking-tight">{t('adminLogs' as any) || t('logs' as any)}</h3>
+                        <p className="text-[10px] text-gray-500 font-bold uppercase tracking-widest mt-1">{t('trackSystemActivity' as any)}</p>
+                      </div>
+                    </div>
+                    <div className="relative w-full md:w-96">
+                      <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-600" size={16} />
+                      <input 
+                        type="text" 
+                        placeholder={t('searchLogs')} 
+                        className="w-full bg-[#121E3D] border border-[#1C2E5A] rounded-xl py-3 pl-10 pr-4 text-sm focus:border-[#D4AF37] outline-none transition-all placeholder:text-gray-700 shadow-inner"
+                        value={logSearch}
+                        onChange={(e) => setLogSearch(e.target.value)}
+                      />
+                    </div>
+                  </div>
 
-            <h4 className="text-[#D4AF37] font-black text-lg flex items-center gap-3 border-b border-[#1C2E5A] pb-4 pt-4">
-              <Database size={22} /> روابط API للقطاعات
-            </h4>
-            <div className="space-y-4">
-              <div className="grid grid-cols-2 gap-4">
-                <div className="space-y-1">
-                  <label className="text-xs text-gray-500">قطاع السلع</label>
-                  <input 
-                    placeholder="Commodities API"
-                    value={formData.sectorApis?.commodities || ''} 
-                    onChange={e => setFormData({...formData, sectorApis: {...formData.sectorApis, commodities: e.target.value}})}
-                    className="w-full bg-[#0A1128] border border-[#1C2E5A] rounded-xl px-4 py-3 text-white outline-none focus:border-[#D4AF37] transition-all"
-                  />
+                  <div className="bg-[#0A1128] border border-[#1C2E5A] rounded-[2rem] overflow-hidden shadow-2xl border-white/5">
+                    <div className="overflow-x-auto custom-scrollbar">
+                      <table className="w-full text-right" dir="rtl">
+                        <thead>
+                          <tr className="bg-[#121E3D]/50 text-gray-500 text-[9px] uppercase font-black tracking-[0.2em] border-b border-[#1C2E5A]">
+                            <th className="p-6 text-right font-black uppercase text-[#D4AF37]">{t('timestamp')}</th>
+                            <th className="p-6 text-right font-black uppercase">{t('admin')}</th>
+                            <th className="p-6 text-right font-black uppercase">{t('actions')}</th>
+                            <th className="p-6 text-right font-black uppercase">{t('details')}</th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-[#1C2E5A]/50">
+                          {logs
+                            .filter(log => 
+                              log.action.toLowerCase().includes(logSearch.toLowerCase()) ||
+                              log.details.toLowerCase().includes(logSearch.toLowerCase()) ||
+                              log.userEmail.toLowerCase().includes(logSearch.toLowerCase())
+                            )
+                            .map(log => (
+                            <tr key={log.id} className="text-xs hover:bg-[#121E3D]/30 transition-colors group">
+                              <td className="p-6 whitespace-nowrap">
+                                <div className="text-gray-200 font-black uppercase tracking-tight">
+                                  {log.timestamp?.toDate().toLocaleDateString(language === 'ar' ? 'ar-LY' : 'en-US')}
+                                </div>
+                                <div className="text-gray-600 text-[9px] font-black uppercase mt-1">
+                                  {log.timestamp?.toDate().toLocaleTimeString(language === 'ar' ? 'ar-LY' : 'en-US')}
+                                </div>
+                              </td>
+                              <td className="p-6">
+                                <div className="flex items-center gap-2">
+                                  <div className="w-6 h-6 bg-[#D4AF37]/20 rounded-lg flex items-center justify-center border border-[#D4AF37]/30">
+                                    <User size={12} className="text-[#D4AF37]" />
+                                  </div>
+                                  <span className="font-black text-white/80 uppercase tracking-tight text-[10px]">{log.userEmail}</span>
+                                </div>
+                              </td>
+                              <td className="p-6">
+                                <span className={`px-2.5 py-1 rounded-lg font-black text-[8px] uppercase tracking-widest border ${
+                                  log.action.includes('حذف') ? 'bg-red-500/10 text-red-500 border-red-500/20' : 
+                                  log.action.includes('تعديل') ? 'bg-blue-500/10 text-blue-400 border-blue-500/20' :
+                                  'bg-green-500/10 text-green-500 border-green-500/20'
+                                }`}>
+                                  {log.action}
+                                </span>
+                              </td>
+                              <td className="p-6 text-gray-500 leading-relaxed font-medium italic group-hover:text-gray-300 transition-colors max-w-xs truncate">{log.details}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
                 </div>
-                <div className="space-y-1">
-                  <label className="text-xs text-gray-500">قطاع المعادن</label>
-                  <input 
-                    placeholder="Metals API"
-                    value={formData.sectorApis?.metals || ''} 
-                    onChange={e => setFormData({...formData, sectorApis: {...formData.sectorApis, metals: e.target.value}})}
-                    className="w-full bg-[#0A1128] border border-[#1C2E5A] rounded-xl px-4 py-3 text-white outline-none focus:border-[#D4AF37] transition-all"
-                  />
-                </div>
-              </div>
-              <div className="grid grid-cols-2 gap-4">
-                <div className="space-y-1">
-                  <label className="text-xs text-gray-500">قطاع الطاقة</label>
-                  <input 
-                    placeholder="Energy API"
-                    value={formData.sectorApis?.energy || ''} 
-                    onChange={e => setFormData({...formData, sectorApis: {...formData.sectorApis, energy: e.target.value}})}
-                    className="w-full bg-[#0A1128] border border-[#1C2E5A] rounded-xl px-4 py-3 text-white outline-none focus:border-[#D4AF37] transition-all"
-                  />
-                </div>
-                <div className="space-y-1">
-                  <label className="text-xs text-gray-500">قطاع الزراعة</label>
-                  <input 
-                    placeholder="Agriculture API"
-                    value={formData.sectorApis?.agriculture || ''} 
-                    onChange={e => setFormData({...formData, sectorApis: {...formData.sectorApis, agriculture: e.target.value}})}
-                    className="w-full bg-[#0A1128] border border-[#1C2E5A] rounded-xl px-4 py-3 text-white outline-none focus:border-[#D4AF37] transition-all"
-                  />
-                </div>
-              </div>
-            </div>
-          </div>
+              )}
+              {activeTab === 'sectors' && <SectorsTab />}
+              {activeTab === 'dataSources' && <DataSourcesTab />}
+              {activeTab === 'exchangeRates' && <ExchangeRatesTab />}
+              {activeTab === 'admin_users' && <AdminUsersTab currentUser={user} />}
+              {activeTab === 'legal' && <LegalTab />}
+              {activeTab === 'backup' && <BackupTab />}
+              {activeTab === 'interface' && <InterfaceTab />}
+              {activeTab === 'charts' && <ChartsTab />}
+              {activeTab === 'alerts' && <AlertsTab />}
+            </motion.div>
+          </AnimatePresence>
         </div>
 
-        <button 
-          onClick={handleSave}
-          disabled={isSaving}
-          className={`w-full bg-gradient-to-r from-[#D4AF37] to-[#B5952F] text-[#0A1128] font-black py-5 rounded-2xl shadow-2xl shadow-[#D4AF37]/20 transition-all flex items-center justify-center gap-3 text-lg transform hover:-translate-y-1 active:scale-95 ${isSaving ? 'opacity-50 cursor-not-allowed' : ''}`}
-        >
-          {isSaving ? <RefreshCw className="animate-spin" size={24} /> : <Save size={24} />}
-          {isSaving ? 'جاري الحفظ...' : 'حفظ ونشر كافة التغييرات على الموقع'}
-        </button>
-      </div>
-    </div>
-  );
-};
-
-const LogsSection = ({ logs, onDownload, isSuperAdmin, adminPermissions }: any) => {
-  const canExport = isSuperAdmin || adminPermissions?.includes('export_data');
-
-  const getTypeLabel = (type: string) => {
-    switch(type) {
-      case 'super_admin': return <span className="px-2 py-1 bg-purple-500/10 text-purple-400 rounded text-xs font-bold whitespace-nowrap">المدير الرئيسي</span>;
-      case 'user': return <span className="px-2 py-1 bg-green-500/10 text-green-400 rounded text-xs font-bold whitespace-nowrap">مستخدم</span>;
-      case 'visitor': return <span className="px-2 py-1 bg-gray-500/10 text-gray-400 rounded text-xs font-bold whitespace-nowrap">زائر</span>;
-      default: return <span className="px-2 py-1 bg-[#D4AF37]/10 text-[#D4AF37] rounded text-xs font-bold whitespace-nowrap">مدير</span>;
-    }
-  };
-
-  return (
-    <div className="space-y-6">
-      <div className="flex justify-between items-center">
-        <h3 className="text-xl font-bold text-white">سجل العمليات الأخير</h3>
-        {canExport && (
-          <button 
-            onClick={() => onDownload(logs, 'activity_logs')}
-            className="flex items-center gap-2 px-4 py-2 bg-[#1C2E5A] text-white rounded-lg hover:bg-[#2A4075] transition-all border border-[#2A4075]"
-          >
-            <Download size={18} className="text-[#D4AF37]" /> تنزيل السجل (CSV)
-          </button>
-        )}
-      </div>
-      <div className="bg-[#121E3D] border border-[#1C2E5A] rounded-2xl overflow-hidden shadow-2xl">
-        <table className="w-full text-right">
-          <thead className="bg-[#1C2E5A] text-gray-300 text-sm">
-            <tr>
-              <th className="px-6 py-4">المستخدم / المسؤول</th>
-              <th className="px-6 py-4">النوع</th>
-              <th className="px-6 py-4">العملية</th>
-              <th className="px-6 py-4">التفاصيل</th>
-              <th className="px-6 py-4">الوقت</th>
-            </tr>
-          </thead>
-          <tbody className="divide-y divide-[#1C2E5A]">
-            {logs.map((log: any) => (
-              <tr key={log.id} className="hover:bg-[#1C2E5A]/30 transition-colors">
-                <td className="px-6 py-4 text-white text-sm">{log.adminEmail}</td>
-                <td className="px-6 py-4">{getTypeLabel(log.type)}</td>
-                <td className="px-6 py-4">
-                  <span className="px-2 py-1 bg-blue-500/10 text-blue-500 rounded text-xs font-bold">
-                    {log.action}
-                  </span>
-                </td>
-                <td className="px-6 py-4 text-gray-400 text-sm">{log.details}</td>
-                <td className="px-6 py-4 text-gray-500 text-xs">
-                  {safeFormatDate(log.timestamp)}
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
-    </div>
-  );
-};
-
-const MessagesSection = ({ messages, logAction, onDownload, isSuperAdmin, adminPermissions }: any) => {
-  const canExport = isSuperAdmin || adminPermissions?.includes('export_data');
-
-  const handleDelete = async (id: string) => {
-    if (!window.confirm('هل أنت متأكد من حذف هذه الرسالة؟')) return;
-    try {
-      await deleteDoc(doc(db, 'messages', id));
-      await logAction('حذف رسالة', 'تم حذف رسالة من صندوق الوارد');
-    } catch (e) {
-      handleFirestoreError(e, OperationType.DELETE, `messages/${id}`);
-    }
-  };
-
-  const toggleRead = async (id: string, current: boolean) => {
-    try {
-      await updateDoc(doc(db, 'messages', id), { read: !current });
-    } catch (e) {
-      handleFirestoreError(e, OperationType.UPDATE, `messages/${id}`);
-    }
-  };
-
-  return (
-    <div className="space-y-6">
-      <div className="flex justify-between items-center">
-        <h3 className="text-xl font-bold text-white">صندوق الوارد (الرسائل والطلبات)</h3>
-        {canExport && (
-          <button 
-            onClick={() => onDownload(messages, 'user_messages')}
-            className="flex items-center gap-2 px-4 py-2 bg-[#1C2E5A] text-white rounded-lg hover:bg-[#2A4075] transition-all border border-[#2A4075]"
-          >
-            <Download size={18} className="text-[#D4AF37]" /> تنزيل الرسائل (CSV)
-          </button>
-        )}
-      </div>
-
-      <div className="grid grid-cols-1 gap-4">
-        {messages.length === 0 ? (
-          <div className="bg-[#121E3D] border border-[#1C2E5A] rounded-2xl p-12 text-center">
-            <MessageSquare size={48} className="text-gray-600 mx-auto mb-4" />
-            <p className="text-gray-400">لا توجد رسائل حالياً</p>
-          </div>
-        ) : (
-          messages.map((msg: any) => (
-            <div 
-              key={msg.id} 
-              className={`bg-[#121E3D] border ${msg.read ? 'border-[#1C2E5A]' : 'border-[#D4AF37]/50'} rounded-2xl p-6 shadow-xl transition-all hover:border-[#D4AF37]`}
-            >
-              <div className="flex justify-between items-start mb-4">
-                <div className="flex items-center gap-4">
-                  <div className="w-12 h-12 rounded-xl bg-[#1C2E5A] flex items-center justify-center text-[#D4AF37]">
-                    <User size={24} />
-                  </div>
-                  <div>
-                    <h4 className="text-white font-bold">{msg.name}</h4>
-                    <p className="text-gray-500 text-xs">{msg.email}</p>
-                  </div>
-                </div>
-                <div className="flex items-center gap-2">
-                  <span className="text-gray-500 text-xs">
-                    {safeFormatDate(msg.createdAt)}
-                  </span>
-                  <button 
-                    onClick={() => handleDelete(msg.id)}
-                    className="p-2 text-red-500 hover:bg-red-500/10 rounded-lg transition-colors"
-                  >
-                    <Trash2 size={18} />
-                  </button>
-                </div>
-              </div>
-              <div className="bg-[#0A1128] rounded-xl p-4 mb-4">
-                <div className="text-[#D4AF37] text-sm font-bold mb-1">{msg.subject}</div>
-                <p className="text-gray-300 text-sm leading-relaxed">{msg.message}</p>
-              </div>
-              <div className="flex justify-end">
-                <button 
-                  onClick={() => toggleRead(msg.id, msg.read)}
-                  className={`text-xs font-bold px-4 py-2 rounded-lg transition-all ${msg.read ? 'text-gray-500 bg-gray-500/10' : 'text-[#D4AF37] bg-[#D4AF37]/10'}`}
+          {/* Import Configuration Modal */}
+          <AnimatePresence>
+            {showImportModal && importConfig.file && (
+              <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 sm:p-6">
+                <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} onClick={() => setShowImportModal(false)} className="absolute inset-0 bg-black/90 backdrop-blur-md" />
+                <motion.div 
+                  initial={{ opacity: 0, scale: 0.9, y: 20 }} 
+                  animate={{ opacity: 1, scale: 1, y: 0 }} 
+                  exit={{ opacity: 0, scale: 0.9, y: 20 }}
+                  className="relative w-full max-w-lg bg-[#0A1128] rounded-3xl border border-[#1C2E5A] shadow-2xl p-8 sm:p-10 overflow-hidden"
                 >
-                  {msg.read ? 'تمت القراءة' : 'تحديد كمقروء'}
-                </button>
+                  <div className="absolute top-0 left-0 w-full h-1 bg-gradient-to-r from-transparent via-[#D4AF37] to-transparent"></div>
+                  
+                  <div className="flex justify-between items-center mb-8">
+                    <div>
+                      <h2 className="text-2xl font-black text-white uppercase tracking-tighter">
+                        {language === 'ar' ? 'إعدادات الاستيراد' : 'Import Settings'}
+                      </h2>
+                      <p className="text-[10px] text-gray-500 font-bold uppercase tracking-[0.3em] mt-1">{importConfig.file.name}</p>
+                    </div>
+                    <button onClick={() => setShowImportModal(false)} className="w-10 h-10 flex items-center justify-center bg-[#121E3D] hover:bg-red-500/10 rounded-xl text-gray-500 hover:text-red-500 transition-all border border-[#1C2E5A]">
+                      <X size={20} />
+                    </button>
+                  </div>
+
+                  <div className="space-y-6">
+                    <p className="text-gray-400 text-sm">
+                      {language === 'ar' ? 'حدد الإعدادات الافتراضية التي سيتم تطبيقها على السلع في حال كانت غير محددة في ملف الإكسل.' : 'Select default settings to be applied if missing in the Excel file.'}
+                    </p>
+                    <div className="space-y-4 text-right">
+                      <div className="space-y-2">
+                        <label className="text-[10px] font-black text-gray-500 uppercase tracking-widest">{language === 'ar' ? 'القطاع (الافتراضي AR)' : 'Sector (Default AR)'}</label>
+                        <select 
+                          className="w-full bg-[#121E3D] border border-[#1C2E5A] rounded-2xl p-4 text-white focus:border-[#D4AF37] outline-none hover:bg-[#1C2E5A] transition-all font-bold appearance-none"
+                          value={importConfig.sectorAr}
+                          onChange={e => setImportConfig({...importConfig, sectorAr: e.target.value})}
+                        >
+                          <option value="">{language === 'ar' ? '-- اختر القطاع --' : '-- Select Sector --'}</option>
+                          {sectors.map((s: any) => (
+                            <option key={s.id} value={s.nameAr}>{s.nameAr}</option>
+                          ))}
+                        </select>
+                      </div>
+                      <div className="space-y-2">
+                        <label className="text-[10px] font-black text-gray-500 uppercase tracking-widest">{language === 'ar' ? 'القطاع (الافتراضي EN)' : 'Sector (Default EN)'}</label>
+                        <select 
+                          className="w-full bg-[#121E3D] border border-[#1C2E5A] rounded-2xl p-4 text-white focus:border-[#D4AF37] outline-none hover:bg-[#1C2E5A] transition-all font-bold appearance-none"
+                          value={importConfig.sectorEn}
+                          onChange={e => setImportConfig({...importConfig, sectorEn: e.target.value})}
+                        >
+                          <option value="">{language === 'ar' ? '-- اختر القطاع --' : '-- Select Sector --'}</option>
+                          {sectors.map((s: any) => (
+                            <option key={s.id} value={s.nameEn}>{s.nameEn}</option>
+                          ))}
+                        </select>
+                      </div>
+                      <div className="space-y-2">
+                        <label className="text-[10px] font-black text-gray-500 uppercase tracking-widest">{language === 'ar' ? 'العملة (الافتراضية)' : 'Currency (Default)'}</label>
+                        <select 
+                          className="w-full bg-[#121E3D] border border-[#1C2E5A] rounded-2xl p-4 text-white focus:border-[#D4AF37] outline-none hover:bg-[#1C2E5A] transition-all font-bold appearance-none"
+                          value={importConfig.currency}
+                          onChange={e => setImportConfig({...importConfig, currency: e.target.value})}
+                        >
+                           <option value="USD">USD - دولار</option>
+                           <option value="EUR">EUR - يورو</option>
+                           <option value="LYD">LYD - دينار ليبي</option>
+                        </select>
+                      </div>
+                    </div>
+
+                    <button 
+                      onClick={processExcelImport}
+                      className="w-full bg-[#D4AF37] text-[#0A1128] font-black uppercase tracking-widest py-4 rounded-xl hover:bg-[#E5C158] transition-all"
+                    >
+                      {language === 'ar' ? 'تأكيد واستيراد' : 'Confirm & Import'}
+                    </button>
+                  </div>
+                </motion.div>
               </div>
-            </div>
-          ))
-        )}
+            )}
+          </AnimatePresence>
+
+          {/* Edit Modal */}
+          <AnimatePresence>
+            {editingItem && (
+              <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 sm:p-6">
+                <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} onClick={() => setEditingItem(null)} className="absolute inset-0 bg-black/90 backdrop-blur-md" />
+                <motion.div 
+                  initial={{ opacity: 0, scale: 0.9, y: 20 }} 
+                  animate={{ opacity: 1, scale: 1, y: 0 }} 
+                  exit={{ opacity: 0, scale: 0.9, y: 20 }} 
+                  className="relative bg-[#0A1128] border border-[#1C2E5A] rounded-[2.5rem] p-10 w-full max-w-2xl shadow-[0_0_50px_-12px_rgba(212,175,55,0.2)] overflow-hidden"
+                >
+                  <div className="absolute top-0 left-0 w-full h-1 bg-gradient-to-r from-transparent via-[#D4AF37] to-transparent"></div>
+                  
+                  <div className="flex justify-between items-center mb-10">
+                    <div>
+                      <h2 className="text-3xl font-black text-white uppercase tracking-tighter">{t('edit')} {editingItem.type}</h2>
+                      <p className="text-[10px] text-gray-500 font-bold uppercase tracking-[0.3em] mt-1">Management Console</p>
+                    </div>
+                    <button onClick={() => setEditingItem(null)} className="w-12 h-12 flex items-center justify-center bg-[#121E3D] hover:bg-red-500/10 rounded-2xl text-gray-500 hover:text-red-500 transition-all border border-[#1C2E5A] hover:border-red-500/20">
+                      <X size={24} />
+                    </button>
+                  </div>
+                  
+                  <div className="space-y-8 max-h-[60vh] overflow-y-auto px-2 custom-scrollbar">
+                    {editingItem.type === 'commodity' && (
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-8">
+                        <div className="space-y-3">
+                          <label className="text-[10px] font-black text-gray-500 uppercase tracking-[0.2em]">{t('nameAr')}</label>
+                          <input className="w-full bg-[#121E3D] border border-[#1C2E5A] rounded-2xl p-5 text-white focus:border-[#D4AF37] outline-none hover:bg-[#1C2E5A] transition-all font-black text-sm" value={editingItem.data.nameAr || ''} onChange={(e) => setEditingItem({...editingItem, data: {...editingItem.data, nameAr: e.target.value}})} />
+                        </div>
+                        <div className="space-y-3">
+                          <label className="text-[10px] font-black text-gray-500 uppercase tracking-[0.2em]">{t('nameEn')}</label>
+                          <input className="w-full bg-[#121E3D] border border-[#1C2E5A] rounded-2xl p-5 text-white focus:border-[#D4AF37] outline-none hover:bg-[#1C2E5A] transition-all font-black text-sm" value={editingItem.data.nameEn || ''} onChange={(e) => setEditingItem({...editingItem, data: {...editingItem.data, nameEn: e.target.value}})} />
+                        </div>
+                        <div className="space-y-3">
+                          <label className="text-[10px] font-black text-gray-500 uppercase tracking-[0.2em]">{t('symbol')}</label>
+                          <input className="w-full bg-[#121E3D] border border-[#1C2E5A] rounded-2xl p-5 text-white focus:border-[#D4AF37] outline-none hover:bg-[#1C2E5A] transition-all font-mono font-black text-sm" value={editingItem.data.symbol || ''} onChange={(e) => setEditingItem({...editingItem, data: {...editingItem.data, symbol: e.target.value}})} />
+                        </div>
+                        <div className="space-y-3">
+                          <label className="text-[10px] font-black text-gray-500 uppercase tracking-[0.2em]">{t('currentPrice')}</label>
+                          <input type="number" className="w-full bg-[#121E3D] border border-[#1C2E5A] rounded-2xl p-5 text-white focus:border-[#D4AF37] outline-none hover:bg-[#1C2E5A] transition-all font-mono font-black text-sm" value={editingItem.data.price || 0} onChange={(e) => {
+                             const p = Number(e.target.value);
+                             const pp = Number(editingItem.data.previousPrice || 0);
+                             const cv = pp > 0 ? (p - pp) : 0;
+                             const cp = pp > 0 ? ((p - pp) / pp) * 100 : 0;
+                             const tr = p > pp ? 'up' : (p < pp ? 'down' : 'neutral');
+                             setEditingItem({...editingItem, data: {...editingItem.data, price: p, changeValue: cv, changePercent: cp.toFixed(2), trend: tr}});
+                          }} />
+                        </div>
+                        <div className="space-y-3">
+                          <label className="text-[10px] font-black text-gray-500 uppercase tracking-[0.2em]">{language === 'ar' ? 'السعر السابق' : 'Previous Price'}</label>
+                          <input type="number" className="w-full bg-[#121E3D] border border-[#1C2E5A] rounded-2xl p-5 text-white focus:border-[#D4AF37] outline-none hover:bg-[#1C2E5A] transition-all font-mono font-black text-sm" value={editingItem.data.previousPrice || 0} onChange={(e) => {
+                             const pp = Number(e.target.value);
+                             const p = Number(editingItem.data.price || 0);
+                             const cv = pp > 0 ? (p - pp) : 0;
+                             const cp = pp > 0 ? ((p - pp) / pp) * 100 : 0;
+                             const tr = p > pp ? 'up' : (p < pp ? 'down' : 'neutral');
+                             setEditingItem({...editingItem, data: {...editingItem.data, previousPrice: pp, changeValue: cv, changePercent: cp.toFixed(2), trend: tr}});
+                          }} />
+                        </div>
+                        <div className="space-y-3">
+                          <label className="text-[10px] font-black text-gray-500 uppercase tracking-[0.2em]">{t('sector')} (AR)</label>
+                          <select 
+                            className="w-full bg-[#121E3D] border border-[#1C2E5A] rounded-2xl p-5 text-white focus:border-[#D4AF37] outline-none hover:bg-[#1C2E5A] transition-all font-black text-sm appearance-none"
+                            value={editingItem.data.sectorAr}
+                            onChange={(e) => {
+                              const s = sectors.find(sec => sec.nameAr === e.target.value);
+                              setEditingItem({...editingItem, data: {...editingItem.data, sectorAr: e.target.value, sectorEn: s?.nameEn || ''}});
+                            }}
+                          >
+                            {sectors.map(s => <option key={s.id} value={s.nameAr}>{s.nameAr}</option>)}
+                          </select>
+                        </div>
+                        <div className="space-y-3">
+                          <label className="text-[10px] font-black text-gray-500 uppercase tracking-[0.2em]">{t('high' as any) || 'High'}</label>
+                          <input type="number" className="w-full bg-[#121E3D] border border-[#1C2E5A] rounded-2xl p-5 text-white focus:border-[#D4AF37] outline-none hover:bg-[#1C2E5A] transition-all font-mono font-black text-sm" value={editingItem.data.high || 0} onChange={(e) => setEditingItem({...editingItem, data: {...editingItem.data, high: Number(e.target.value)}})} />
+                        </div>
+                        <div className="space-y-3">
+                          <label className="text-[10px] font-black text-gray-500 uppercase tracking-[0.2em]">{t('low' as any) || 'Low'}</label>
+                          <input type="number" className="w-full bg-[#121E3D] border border-[#1C2E5A] rounded-2xl p-5 text-white focus:border-[#D4AF37] outline-none hover:bg-[#1C2E5A] transition-all font-mono font-black text-sm" value={editingItem.data.low || 0} onChange={(e) => setEditingItem({...editingItem, data: {...editingItem.data, low: Number(e.target.value)}})} />
+                        </div>
+                        <div className="space-y-3">
+                          <label className="text-[10px] font-black text-gray-500 uppercase tracking-[0.2em]">{t('unit' as any) || 'Unit'}</label>
+                          <input className="w-full bg-[#121E3D] border border-[#1C2E5A] rounded-2xl p-5 text-white focus:border-[#D4AF37] outline-none hover:bg-[#1C2E5A] transition-all font-black text-sm" value={editingItem.data.unit || ''} onChange={(e) => setEditingItem({...editingItem, data: {...editingItem.data, unit: e.target.value}})} />
+                        </div>
+                        <div className="space-y-3">
+                          <label className="text-[10px] font-black text-gray-500 uppercase tracking-[0.2em]">{t('source' as any) || 'Source'}</label>
+                          <input className="w-full bg-[#121E3D] border border-[#1C2E5A] rounded-2xl p-5 text-white focus:border-[#D4AF37] outline-none hover:bg-[#1C2E5A] transition-all font-black text-sm" value={editingItem.data.source || ''} onChange={(e) => setEditingItem({...editingItem, data: {...editingItem.data, source: e.target.value}})} />
+                        </div>
+                      </div>
+                    )}
+
+                    {editingItem.type === 'news' && (
+                      <div className="space-y-8">
+                        <div className="space-y-3">
+                          <label className="text-[10px] font-black text-gray-500 uppercase tracking-[0.2em]">{t('newsAr')}</label>
+                          <textarea className="w-full bg-[#121E3D] border border-[#1C2E5A] rounded-3xl p-6 text-white focus:border-[#D4AF37] outline-none hover:bg-[#1C2E5A] transition-all min-h-[150px] font-black text-lg" value={editingItem.data.text_ar} onChange={(e) => setEditingItem({...editingItem, data: {...editingItem.data, text_ar: e.target.value}})} />
+                        </div>
+                        <div className="space-y-3">
+                          <label className="text-[10px] font-black text-gray-500 uppercase tracking-[0.2em]">{t('newsEn')}</label>
+                          <textarea className="w-full bg-[#121E3D] border border-[#1C2E5A] rounded-3xl p-6 text-white focus:border-[#D4AF37] outline-none hover:bg-[#1C2E5A] transition-all min-h-[150px] font-black text-sm italic" value={editingItem.data.text_en} onChange={(e) => setEditingItem({...editingItem, data: {...editingItem.data, text_en: e.target.value}})} />
+                        </div>
+                        <div className="flex gap-8">
+                          <label className="flex items-center gap-3 cursor-pointer">
+                            <input type="checkbox" className="w-5 h-5 accent-[#D4AF37]" checked={editingItem.data.is_breaking || false} onChange={(e) => setEditingItem({...editingItem, data: {...editingItem.data, is_breaking: e.target.checked}})} />
+                            <span className="font-bold text-white text-sm">{language === 'ar' ? 'خبر عاجل' : 'Breaking News'}</span>
+                          </label>
+                          <div className="space-y-3 flex-1">
+                            <label className="text-[10px] font-black text-gray-500 uppercase tracking-[0.2em]">{language === 'ar' ? 'التصنيف' : 'Category'}</label>
+                            <input className="w-full bg-[#121E3D] border border-[#1C2E5A] rounded-2xl p-4 text-white focus:border-[#D4AF37] outline-none transition-all font-black text-sm" value={editingItem.data.category || 'general'} onChange={(e) => setEditingItem({...editingItem, data: {...editingItem.data, category: e.target.value}})} />
+                          </div>
+                        </div>
+                      </div>
+                    )}
+
+                    {editingItem.type === 'report' && (
+                      <div className="space-y-8">
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-8">
+                          <div className="space-y-3">
+                            <label className="text-[10px] font-black text-gray-500 uppercase tracking-[0.2em]">Title (AR)</label>
+                            <input className="w-full bg-[#121E3D] border border-[#1C2E5A] rounded-2xl p-5 text-white focus:border-[#D4AF37] outline-none font-black text-lg" value={editingItem.data.titleAr} onChange={(e) => setEditingItem({...editingItem, data: {...editingItem.data, titleAr: e.target.value}})} />
+                          </div>
+                          <div className="space-y-3">
+                            <label className="text-[10px] font-black text-gray-500 uppercase tracking-[0.2em]">Title (EN)</label>
+                            <input className="w-full bg-[#121E3D] border border-[#1C2E5A] rounded-2xl p-5 text-white focus:border-[#D4AF37] outline-none font-black text-lg italic" value={editingItem.data.titleEn} onChange={(e) => setEditingItem({...editingItem, data: {...editingItem.data, titleEn: e.target.value}})} />
+                          </div>
+                        </div>
+                        <div className="space-y-3">
+                          <label className="text-[10px] font-black text-gray-500 uppercase tracking-[0.2em]">Content (AR)</label>
+                          <textarea className="w-full bg-[#121E3D] border border-[#1C2E5A] rounded-3xl p-6 text-white focus:border-[#D4AF37] outline-none min-h-[250px] font-serif leading-relaxed" value={editingItem.data.contentAr} onChange={(e) => setEditingItem({...editingItem, data: {...editingItem.data, contentAr: e.target.value}})} />
+                        </div>
+                        <div className="space-y-3">
+                          <label className="text-[10px] font-black text-gray-500 uppercase tracking-[0.2em]">Content (EN)</label>
+                          <textarea className="w-full bg-[#121E3D] border border-[#1C2E5A] rounded-3xl p-6 text-white focus:border-[#D4AF37] outline-none min-h-[250px] font-serif leading-relaxed italic" value={editingItem.data.contentEn} onChange={(e) => setEditingItem({...editingItem, data: {...editingItem.data, contentEn: e.target.value}})} />
+                        </div>
+                      </div>
+                    )}
+                  </div>
+
+                  <div className="flex gap-4 mt-12 bg-[#121E3D]/50 p-6 -mx-10 -mb-10 border-t border-[#1C2E5A]">
+                    <button onClick={async () => {
+                      const { id, ...data } = editingItem.data;
+                      let collectionName = '';
+                      if (editingItem.type === 'news') collectionName = 'news_ticker';
+                      else if (editingItem.type === 'commodity') collectionName = 'commodities';
+                      else collectionName = editingItem.type + 's';
+
+                      if (editingItem.type === 'commodity') {
+                        if (!data.symbol || String(data.symbol).trim() === '') {
+                          alert(language === 'ar' ? 'يجب إدخال الرمز' : 'Symbol is required');
+                          return;
+                        }
+                        const symbol = String(data.symbol).trim();
+                        if (isNaN(Number(data.price)) || Number(data.price) < 0) {
+                          alert(language === 'ar' ? 'السعر غير صالح' : 'Invalid price');
+                          return;
+                        }
+                        
+                        // Let logic handle find existing logic.
+                        const existing = commodities.find((c: any) => c.symbol === symbol && c.id !== id);
+                        if (existing && !id) {
+                            // The user requested to update it if it exists. Wait, if it exists and we're adding, we should just update it instead of adding another.
+                            // but actually, we should just upsert below based on symbol or ID.
+                        }
+                        
+                        const newPrice = Number(data.price) || 0;
+                        const previousPrice = Number(data.previousPrice) || (id ? (commodities.find(c => c.id === id)?.price || newPrice) : newPrice);
+                        const changeValue = newPrice - previousPrice;
+                        const changePercent = previousPrice > 0 ? ((newPrice - previousPrice) / previousPrice) * 100 : 0;
+                        let trend = 'neutral';
+                        if (newPrice > previousPrice) trend = 'up';
+                        else if (newPrice < previousPrice) trend = 'down';
+                        
+                        const supabaseData = {
+                          symbol: symbol,
+                          name_ar: data.nameAr,
+                          name_en: data.nameEn,
+                          sector: data.sectorAr, // Using Arabic sector as main sector column
+                          price: newPrice,
+                          previous_price: previousPrice,
+                          change_value: changeValue,
+                          change_percent: changePercent,
+                          trend: trend,
+                          high: Number(data.high) || newPrice,
+                          low: Number(data.low) || newPrice,
+                          unit: data.unit,
+                          source: data.source,
+                          status: 'active',
+                          is_visible: data.isVisible !== false,
+                          updated_at: new Date().toISOString()
+                        };
+
+                        if (id || existing) {
+                          const updateId = id || existing.id;
+                          const { error } = await supabase.from('commodities').update(supabaseData).eq('id', updateId);
+                          if (error) { console.error(error); alert('Error saving to Supabase'); return; }
+                        } else {
+                          const { error } = await supabase.from('commodities').insert([supabaseData]);
+                          if (error) { console.error(error); alert('Error inserting to Supabase'); return; }
+                        }
+                        logUserActivity(id ? 'تعديل' : 'إضافة', `تعديل ${editingItem.type}: ${data.nameAr}`);
+                        setEditingItem(null);
+                        return;
+                      }
+
+                      if (editingItem.type === 'news') {
+                        const newsData = {
+                          title_ar: data.text_ar,
+                          title_en: data.text_en,
+                          content_ar: data.text_ar,
+                          content_en: data.text_en,
+                          is_breaking: data.is_breaking || false,
+                          status: data.active ? 'published' : 'hidden',
+                          is_visible: data.active !== false,
+                          category: data.category || 'general',
+                          updated_at: new Date().toISOString()
+                        };
+
+                        if (id) {
+                          const { error } = await supabase.from('news').update({...newsData, updated_at: new Date().toISOString()}).eq('id', id);
+                          if (error) { console.error(error); alert('Error saving to Supabase'); return; }
+                        } else {
+                          const { error } = await supabase.from('news').insert([{...newsData, created_at: new Date().toISOString(), updated_at: new Date().toISOString()}]);
+                          if (error) { console.error(error); alert('Error inserting to Supabase'); return; }
+                        }
+                        logUserActivity(id ? 'تعديل' : 'إضافة', `تعديل ${editingItem.type}: ${data.text_ar}`);
+                        setEditingItem(null);
+                        return;
+                      }
+
+                      if (id) {
+                        try {
+                          await updateDoc(doc(db, collectionName, id), data);
+                          logUserActivity('تعديل', `تعديل ${editingItem.type}: ${data.nameAr || data.text_ar || data.titleAr}`);
+                        } catch (e) {
+                          handleFirestoreError(e, OperationType.UPDATE, collectionName);
+                        }
+                      } else {
+                        try {
+                          await addDoc(collection(db, collectionName), { ...data, createdAt: serverTimestamp() });
+                          logUserActivity('إضافة', `إضافة ${editingItem.type}: ${data.nameAr || data.text_ar || data.titleAr}`);
+                        } catch (e) {
+                          handleFirestoreError(e, OperationType.CREATE, collectionName);
+                        }
+                      }
+                      setEditingItem(null);
+                    }} className="flex-1 bg-[#D4AF37] text-[#0A1128] font-black py-5 rounded-2xl hover:bg-[#E5C158] transition-all shadow-xl shadow-[#D4AF37]/10 uppercase tracking-widest text-xs">{t('saveChanges')}</button>
+                    <button onClick={() => setEditingItem(null)} className="flex-1 bg-[#1C2E5A] text-white font-black py-5 rounded-2xl hover:bg-[#25396D] transition-all uppercase tracking-widest text-xs border border-[#2A4075]">{t('cancel')}</button>
+                  </div>
+                </motion.div>
+              </div>
+            )}
+          </AnimatePresence>
+        </main>
       </div>
-    </div>
-  );
-};
-
-const AdminsSection = ({ adminsList, logAction, currentUserEmail }: any) => {
-  const [newAdminEmail, setNewAdminEmail] = useState('');
-  const [selectedPermissions, setSelectedPermissions] = useState<string[]>([]);
-
-  const availablePermissions = [
-    { id: 'view_dashboard', label: 'الوصول للوحة التحكم (الرئيسية)' },
-    { id: 'manage_commodities', label: 'إدارة وتحديث أسعار السلع' },
-    { id: 'add_delete_commodities', label: 'إضافة وحذف السلع' },
-    { id: 'import_csv', label: 'استيراد البيانات (CSV/Excel)' },
-    { id: 'export_data', label: 'تصدير البيانات والتقارير' },
-    { id: 'manage_news', label: 'إدارة شريط الأخبار' },
-    { id: 'manage_content', label: 'إدارة المحتوى والصفحات' },
-    { id: 'manage_settings', label: 'إعدادات المنصة المتقدمة' },
-    { id: 'manage_messages', label: 'الاطلاع وإدارة الرسائل' }
-  ];
-
-  const togglePermission = (permId: string) => {
-    setSelectedPermissions(prev => 
-      prev.includes(permId) ? prev.filter(p => p !== permId) : [...prev, permId]
     );
-  };
-
-  const handleAddAdmin = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!newAdminEmail.trim()) return;
-    
-    try {
-      await setDoc(doc(db, 'admins', newAdminEmail.trim().toLowerCase()), {
-        email: newAdminEmail.trim().toLowerCase(),
-        addedBy: currentUserEmail,
-        createdAt: serverTimestamp(),
-        permissions: selectedPermissions
-      });
-      await logAction('إضافة مسؤول', `تم إضافة المسؤول الجديد: ${newAdminEmail} بصلاحيات: ${selectedPermissions.join(', ')}`);
-      setNewAdminEmail('');
-      setSelectedPermissions([]);
-      alert('تمت إضافة المسؤول بنجاح');
-    } catch (error) {
-      handleFirestoreError(error, OperationType.WRITE, 'admins');
-    }
-  };
-
-  const handleUpdatePermissions = async (email: string, newPermissions: string[]) => {
-    try {
-      await updateDoc(doc(db, 'admins', email), {
-        permissions: newPermissions
-      });
-      await logAction('تحديث صلاحيات', `تم تحديث صلاحيات المسؤول: ${email}`);
-      alert('تم تحديث الصلاحيات بنجاح');
-    } catch (error) {
-      handleFirestoreError(error, OperationType.UPDATE, 'admins');
-    }
-  };
-
-  const handleRemoveAdmin = async (email: string) => {
-    if (email === 'ahmedhmeda67@gmail.com') {
-      alert('لا يمكن حذف المسؤول الرئيسي');
-      return;
-    }
-    if (!window.confirm(`هل أنت متأكد من إزالة صلاحيات المسؤول عن ${email}؟`)) return;
-    
-    try {
-      await deleteDoc(doc(db, 'admins', email));
-      await logAction('إزالة مسؤول', `تمت إزالة المسؤول: ${email}`);
-      alert('تمت إزالة المسؤول بنجاح');
-    } catch (error) {
-      handleFirestoreError(error, OperationType.DELETE, 'admins');
-    }
-  };
-
-  return (
-    <div className="space-y-6">
-      <div className="bg-[#121E3D] border border-[#1C2E5A] rounded-2xl p-6 shadow-xl">
-        <h2 className="text-xl font-bold text-white mb-6 flex items-center gap-2">
-          <Users className="text-[#D4AF37]" /> إضافة مسؤول جديد
-        </h2>
-        <form onSubmit={handleAddAdmin} className="space-y-4">
-          <div className="flex gap-4">
-            <input
-              type="email"
-              value={newAdminEmail}
-              onChange={(e) => setNewAdminEmail(e.target.value)}
-              placeholder="البريد الإلكتروني للمسؤول الجديد"
-              className="flex-grow bg-[#0A1128] border border-[#1C2E5A] rounded-xl px-4 py-3 text-white focus:outline-none focus:border-[#D4AF37]"
-              required
-            />
-            <button
-              type="submit"
-              className="bg-[#D4AF37] text-[#0A1128] font-bold px-6 py-3 rounded-xl hover:bg-[#B5952F] transition-colors flex items-center gap-2"
-            >
-              <Plus size={20} /> إضافة
-            </button>
-          </div>
-          <div className="bg-[#0A1128] p-4 rounded-xl border border-[#1C2E5A]">
-            <h3 className="text-white font-bold mb-3">تحديد الصلاحيات:</h3>
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-              {availablePermissions.map(perm => (
-                <label key={perm.id} className="flex items-center gap-2 text-gray-300 cursor-pointer">
-                  <input 
-                    type="checkbox" 
-                    checked={selectedPermissions.includes(perm.id)}
-                    onChange={() => togglePermission(perm.id)}
-                    className="w-4 h-4 rounded border-gray-600 text-[#D4AF37] focus:ring-[#D4AF37] bg-gray-700"
-                  />
-                  {perm.label}
-                </label>
-              ))}
-            </div>
-          </div>
-        </form>
-      </div>
-
-      <div className="bg-[#121E3D] border border-[#1C2E5A] rounded-2xl p-6 shadow-xl">
-        <h2 className="text-xl font-bold text-white mb-6">المدراء الحاليون</h2>
-        <div className="space-y-4">
-          <div className="bg-[#0A1128] border border-[#1C2E5A] rounded-xl p-4 flex justify-between items-center">
-            <div>
-              <div className="text-white font-bold">ahmedhmeda67@gmail.com</div>
-              <div className="text-gray-500 text-xs">المسؤول الرئيسي (كافة الصلاحيات)</div>
-            </div>
-            <Shield className="text-[#D4AF37]" size={24} />
-          </div>
-          
-          {adminsList.map((admin: any) => (
-            <div key={admin.id} className="bg-[#0A1128] border border-[#1C2E5A] rounded-xl p-4 flex flex-col gap-4">
-              <div className="flex justify-between items-center">
-                <div>
-                  <div className="text-white font-bold">{admin.email}</div>
-                  <div className="text-gray-500 text-xs">
-                    تمت الإضافة بواسطة: {admin.addedBy} | {safeFormatDate(admin.createdAt, 'date')}
-                  </div>
-                </div>
-                <button
-                  onClick={() => handleRemoveAdmin(admin.email)}
-                  className="p-2 text-red-500 hover:bg-red-500/10 rounded-lg transition-colors"
-                  title="إزالة المسؤول"
-                >
-                  <Trash2 size={20} />
-                </button>
-              </div>
-              <div className="border-t border-[#1C2E5A] pt-3">
-                <h4 className="text-sm text-gray-400 mb-2">الصلاحيات:</h4>
-                <div className="flex flex-wrap gap-2">
-                  {availablePermissions.map(perm => {
-                    const hasPerm = admin.permissions?.includes(perm.id);
-                    return (
-                      <label key={perm.id} className="flex items-center gap-1 text-xs text-gray-300 cursor-pointer bg-[#121E3D] px-2 py-1 rounded">
-                        <input 
-                          type="checkbox" 
-                          checked={hasPerm}
-                          onChange={() => {
-                            const newPerms = hasPerm 
-                              ? admin.permissions.filter((p: string) => p !== perm.id)
-                              : [...(admin.permissions || []), perm.id];
-                            handleUpdatePermissions(admin.email, newPerms);
-                          }}
-                          className="w-3 h-3 rounded border-gray-600 text-[#D4AF37] focus:ring-[#D4AF37] bg-gray-700"
-                        />
-                        {perm.label}
-                      </label>
-                    );
-                  })}
-                </div>
-              </div>
-            </div>
-          ))}
-        </div>
-      </div>
-    </div>
-  );
 };
+
+const NavItem = ({ active, icon, label, onClick, language }: any) => (
+  <button 
+    onClick={onClick}
+    className={`w-full flex items-center gap-4 px-6 py-4 rounded-2xl transition-all relative group ${active ? 'text-[#0A1128] font-black' : 'text-gray-500 hover:text-white hover:bg-[#121E3D]'}`}
+  >
+    {active && (
+      <motion.div 
+        layoutId="activeNav"
+        className="absolute inset-0 bg-[#D4AF37] rounded-2xl z-0 shadow-xl shadow-[#D4AF37]/10"
+        transition={{ type: "spring", bounce: 0.2, duration: 0.6 }}
+      />
+    )}
+    <div className={`relative z-10 flex items-center gap-4 w-full ${language === 'ar' ? 'flex-row' : 'flex-row'}`}>
+      <div className={`shrink-0 transition-all duration-300 ${active ? 'scale-110' : 'group-hover:scale-110 group-hover:text-[#D4AF37]'}`}>
+        {React.cloneElement(icon, { size: 20 })}
+      </div>
+      <span className={`text-[11px] font-black uppercase tracking-tight truncate flex-1 ${language === 'ar' ? 'text-right' : 'text-left'}`}>{label}</span>
+      {active && (
+        <div className={`w-1.5 h-1.5 rounded-full bg-white shadow-sm absolute ${language === 'ar' ? '-right-1' : '-left-1'}`}></div>
+      )}
+    </div>
+  </button>
+);

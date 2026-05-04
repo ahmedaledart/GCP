@@ -13,7 +13,7 @@ import { LineChart, Line, ResponsiveContainer, YAxis, Tooltip, AreaChart, Area, 
 import { motion, AnimatePresence } from 'motion/react';
 
 import { useLocation } from 'react-router-dom';
-import { logUserActivity } from '../firebase';
+import { logUserActivity } from '../lib/api';
 
 type SortConfig = {
   key: keyof ReturnType<typeof useMarketData>['data'][0] | null;
@@ -40,7 +40,7 @@ const Sparkline = ({ data, trend }: { data: any[], trend: 'up' | 'down' | 'neutr
 };
 
 export const AdvancedTable = () => {
-  const { data: commoditiesData, connected, loading, error, lastUpdate, latency } = useMarketData();
+  const { data: commoditiesData, connected, loading, error, lastUpdate, latency, isMockData } = useMarketData();
   const { t, language } = useLanguage();
   const location = useLocation();
   const [searchTerm, setSearchTerm] = useState('');
@@ -378,7 +378,7 @@ export const AdvancedTable = () => {
             <div className="flex flex-col gap-2">
               <h2 className="text-2xl font-bold text-white flex items-center gap-2">
                 {t('tableTitle')}
-                {useMarketData().isMockData && (
+                {isMockData && (
                   <span className="bg-yellow-500/10 text-yellow-500 text-xs px-2 py-1 rounded border border-yellow-500/20 font-normal">
                     {language === 'ar' ? 'بيانات تجريبية' : 'Mock Data'}
                   </span>
