@@ -3,12 +3,13 @@ import { useLanguage } from '../context/LanguageContext';
 import { FileText, ChevronDown, Download, AlertCircle, Clock, BookOpen } from 'lucide-react';
 import Markdown from 'react-markdown';
 import { motion, AnimatePresence } from 'motion/react';
-import { 
-  db, collection, query, where, orderBy, getDocs 
-} from '../lib/api';
+import { supabase } from '../lib/supabase';
+import { useAuth } from '../context/AuthContext';
+import { AccessRestricted } from '../components/AccessRestricted';
 
 export const Reports = () => {
   const { language } = useLanguage();
+  const { platformUser } = useAuth();
   const [reports, setReports] = useState<any[]>([]);
   const [selectedReport, setSelectedReport] = useState<any>(null);
   const [loading, setLoading] = useState(true);
@@ -16,16 +17,26 @@ export const Reports = () => {
   useEffect(() => {
     const fetchReports = async () => {
       try {
-        const q = query(
-          collection(db, 'reports'),
-          where('status', '==', 'published'),
-          orderBy('publishedAt', 'desc')
-        );
-        const snapshot = await getDocs(q);
-        const fetchedReports = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-        setReports(fetchedReports);
-        if (fetchedReports.length > 0) {
-          setSelectedReport(fetchedReports[0]);
+        const { data } = await supabase
+          .from('analyses')
+          .select('*')
+          .eq('status', 'published')
+          .order('created_at', { ascending: false });
+        
+        if (data) {
+          const fetchedReports = data.map(a => ({ 
+            id: a.id, 
+            titleAr: a.title_ar,
+            titleEn: a.title_en,
+            contentAr: a.content_ar,
+            contentEn: a.content_en,
+            publishedAt: a.created_at,
+            ...a
+          }));
+          setReports(fetchedReports);
+          if (fetchedReports.length > 0) {
+            setSelectedReport(fetchedReports[0]);
+          }
         }
       } catch (e) {
         console.error('Error fetching reports:', e);
@@ -49,9 +60,9 @@ export const Reports = () => {
     document.body.removeChild(element);
   };
 
-  const formatDate = (ts: any) => {
-    if (!ts?.toDate) return '';
-    return ts.toDate().toLocaleDateString(language === 'ar' ? 'ar-LY' : 'en-US', {
+  const formatDate = (dateStr: string) => {
+    if (!dateStr) return '';
+    return new Date(dateStr).toLocaleDateString(language === 'ar' ? 'ar-LY' : 'en-US', {
       year: 'numeric', month: 'long', day: 'numeric'
     });
   };
@@ -62,6 +73,10 @@ export const Reports = () => {
         <div className="animate-spin rounded-full h-12 w-12 border-t-2 border-b-2 border-[#D4AF37]"></div>
       </div>
     );
+  }
+
+  if (platformUser?.approval_status !== 'approved' || !platformUser?.is_active) {
+    return <AccessRestricted />;
   }
 
   return (

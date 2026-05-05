@@ -4,24 +4,18 @@ import { NavLink, Link, useNavigate } from 'react-router-dom';
 import { motion, AnimatePresence } from 'motion/react';
 import { useLanguage } from '../context/LanguageContext';
 import { useSettings } from '../context/SettingsContext';
-import { 
-  auth, db, googleProvider, signInWithPopup, signOut, 
-  onAuthStateChanged, logUserActivity, collection, query, 
-  where, orderBy, onSnapshot, updateDoc, doc, serverTimestamp, 
-  addDoc, getDoc 
-} from '../lib/api';
-import { AuthModal } from './AuthModal';
+import { supabase } from '../lib/supabase';
+import { AuthProvider, useAuth } from '../context/AuthContext';
 
 export const Header = () => {
   const { t, language, setLanguage } = useLanguage();
   const { settings } = useSettings();
-  const [user, setUser] = useState<any | null>(null);
+  const { user, platformUser, signOut, statusMessage } = useAuth();
   const [isAdmin, setIsAdmin] = useState(false);
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
   const [notifications, setNotifications] = useState<any[]>([]);
   const [showNotifications, setShowNotifications] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
-  const [isAuthModalOpen, setIsAuthModalOpen] = useState(false);
   const notificationRef = useRef<HTMLDivElement>(null);
   const ADMIN_EMAIL = "ahmedhmeda67@gmail.com";
   const navigate = useNavigate();
@@ -35,31 +29,25 @@ export const Header = () => {
   };
 
   useEffect(() => {
-    const unsubscribe = onAuthStateChanged(auth, async (currentUser) => {
-      setUser(currentUser);
-      
-      if (currentUser && currentUser.email) {
-        if (currentUser.email === ADMIN_EMAIL) {
-          setIsAdmin(true);
-        } else {
-          try {
-            const adminDoc = await getDoc(doc(db, 'admins', currentUser.email));
-            if (adminDoc.exists()) {
-              setIsAdmin(true);
-            } else {
-              setIsAdmin(false);
-            }
-          } catch (error) {
-            console.error("Error checking admin status:", error);
-            setIsAdmin(false);
-          }
-        }
+    if (!user?.email) {
+      setIsAdmin(false);
+      return;
+    }
+
+    const checkAdmin = async () => {
+      if (user.email === ADMIN_EMAIL) {
+        setIsAdmin(true);
       } else {
-        setIsAdmin(false);
+        try {
+          const { data } = await supabase.from('admin_users').select('*').eq('email', user.email).single();
+          setIsAdmin(!!data && data.is_active);
+        } catch (error) {
+          setIsAdmin(false);
+        }
       }
-    });
-    return () => unsubscribe();
-  }, []);
+    };
+    checkAdmin();
+  }, [user]);
 
   useEffect(() => {
     if (!user) {
@@ -67,44 +55,29 @@ export const Header = () => {
       return;
     }
 
-    const q = query(
-      collection(db, 'notifications'),
-      where('userId', '==', user.uid),
-      orderBy('createdAt', 'desc')
-    );
+    const fetchNotifications = async () => {
+      const { data } = await supabase.from('notifications').select('*').eq('userId', user.id).order('created_at', { ascending: false });
+      if (data) setNotifications(data);
+    };
 
-    const unsubscribe = onSnapshot(q, (snapshot) => {
-      const notifs = snapshot.docs.map(doc => ({
-        id: doc.id,
-        ...doc.data()
-      }));
-      setNotifications(notifs);
-    }, (error) => {
-      console.error("Error fetching notifications:", error);
-    });
+    fetchNotifications();
 
-    return () => unsubscribe();
+    const sub = supabase.channel('notifs').on('postgres_changes', { event: '*', schema: 'public', table: 'notifications', filter: `userId=eq.${user.id}` }, () => {
+      fetchNotifications();
+    }).subscribe();
+
+    return () => { supabase.removeChannel(sub); };
   }, [user]);
 
-  useEffect(() => {
-    const handleClickOutside = (event: MouseEvent) => {
-      if (notificationRef.current && !notificationRef.current.contains(event.target as Node)) {
-        setShowNotifications(false);
-      }
-    };
-    document.addEventListener('mousedown', handleClickOutside);
-    return () => document.removeEventListener('mousedown', handleClickOutside);
-  }, []);
-
   const handleLogin = () => {
-    setIsAuthModalOpen(true);
+    navigate('/auth');
   };
 
   const handleLogout = async () => {
     try {
-      await logUserActivity('تسجيل الخروج', 'قام المستخدم بتسجيل الخروج من المنصة');
-      await signOut(auth);
+      await signOut();
       setShowNotifications(false);
+      navigate('/');
     } catch (error) {
       console.error("Error signing out", error);
     }
@@ -112,9 +85,7 @@ export const Header = () => {
 
   const markAsRead = async (id: string) => {
     try {
-      await updateDoc(doc(db, 'notifications', id), {
-        read: true
-      });
+      await supabase.from('notifications').update({ read: true }).eq('id', id);
     } catch (error) {
       console.error("Error marking notification as read:", error);
     }
@@ -261,18 +232,38 @@ export const Header = () => {
           
           {user ? (
             <div className="flex items-center gap-3">
-              <div className="hidden sm:flex items-center gap-2">
-                <img src={user.photoURL || ''} alt="User" className="w-8 h-8 rounded-full border border-[#D4AF37]" referrerPolicy="no-referrer" />
-                <span className="text-sm font-medium text-white">{user.displayName}</span>
+              <div className="hidden sm:flex flex-col items-end">
+                <div className="flex items-center gap-2">
+                  <span className="text-sm font-black text-white uppercase tracking-tight">{platformUser?.full_name || user.email?.split('@')[0]}</span>
+                  <div className="w-8 h-8 rounded-xl bg-[#121E3D] border border-[#1C2E5A] flex items-center justify-center text-[#D4AF37] shadow-inner overflow-hidden">
+                    <User size={18} />
+                  </div>
+                </div>
+                {platformUser && (
+                  <div className={`text-[8px] font-black uppercase tracking-[0.2em] mt-1 px-2 py-0.5 rounded-full border ${
+                    platformUser.approval_status === 'approved' ? 'bg-green-500/10 text-green-500 border-green-500/20' :
+                    platformUser.approval_status === 'pending' ? 'bg-yellow-500/10 text-yellow-500 border-yellow-500/20' :
+                    'bg-red-500/10 text-red-500 border-red-500/20'
+                  }`}>
+                    {platformUser.approval_status === 'approved' ? (language === 'ar' ? 'مفعل' : 'Approved') :
+                     platformUser.approval_status === 'pending' ? (language === 'ar' ? 'بانتظار الموافقة' : 'Pending Approval') :
+                     platformUser.approval_status === 'rejected' ? (language === 'ar' ? 'مرفوض' : 'Rejected') :
+                     (language === 'ar' ? 'موقوف' : 'Deactivated')}
+                  </div>
+                )}
               </div>
-              <button onClick={handleLogout} className="p-2 text-gray-300 hover:text-white transition-colors" title="تسجيل الخروج">
+              <button 
+                onClick={handleLogout} 
+                className="w-10 h-10 flex items-center justify-center text-gray-500 hover:text-red-500 hover:bg-red-500/10 rounded-xl transition-all" 
+                title={language === 'ar' ? 'تسجيل الخروج' : 'Logout'}
+              >
                 <LogOut size={20} />
               </button>
             </div>
           ) : (
-            <button onClick={handleLogin} className="flex items-center gap-2 bg-[#1C2E5A] hover:bg-[#2A4075] transition-colors px-3 py-2 rounded-lg text-sm font-medium border border-[#2A4075]">
-              <User size={18} className="text-[#D4AF37]" />
-              <span className="hidden sm:inline">{t('signUpGoogle')}</span>
+            <button onClick={handleLogin} className="flex items-center gap-2 bg-[#D4AF37] hover:bg-[#E5C158] text-[#0A1128] transition-all px-5 py-2.5 rounded-xl text-xs font-black uppercase tracking-widest shadow-xl shadow-[#D4AF37]/10">
+              <User size={18} />
+              <span className="hidden sm:inline">{language === 'ar' ? 'دخول / تسجيل' : 'Login / Register'}</span>
             </button>
           )}
 
@@ -318,7 +309,6 @@ export const Header = () => {
           </motion.div>
         )}
       </AnimatePresence>
-      <AuthModal isOpen={isAuthModalOpen} onClose={() => setIsAuthModalOpen(false)} language={language as 'ar' | 'en'} />
     </header>
   );
 };

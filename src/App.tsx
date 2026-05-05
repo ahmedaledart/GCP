@@ -13,12 +13,15 @@ import { Reports } from './pages/Reports';
 import { Contact } from './pages/Contact';
 import { FAQ } from './pages/FAQ';
 import { Admin } from './pages/Admin';
+import { LegalPage } from './pages/LegalPage';
 import { Services } from './components/Services';
 import { VisitorTracker } from './components/VisitorTracker';
 import { ScrollToTop } from './components/ScrollToTop';
 import { LanguageProvider, useLanguage } from './context/LanguageContext';
 import { SettingsProvider, useSettings } from './context/SettingsContext';
 import { MarketProvider } from './context/MarketContext';
+import { AuthProvider } from './context/AuthContext';
+import { Auth } from './pages/Auth';
 
 const MaintenanceMode = () => {
   const { settings } = useSettings();
@@ -33,10 +36,10 @@ const MaintenanceMode = () => {
           <ShieldAlert className="text-[#D4AF37] mx-auto mb-8" size={80} />
         )}
         <h1 className="text-3xl font-black text-white mb-6 tracking-tight uppercase">
-          {language === 'ar' ? 'الموقع تحت الصيانة' : 'Site Under Maintenance'}
+          {language === 'ar' ? (settings.maintenanceTitleAr || 'الموقع تحت الصيانة') : 'Site Under Maintenance'}
         </h1>
         <p className="text-gray-400 text-lg leading-relaxed font-bold">
-          {language === 'ar' ? 'نعمل حاليًا على تحديث منصة الأسعار العالمية يرجى العودة لاحقًا' : 'We are currently updating the global pricing platform, please check back later'}
+          {language === 'ar' ? (settings.maintenanceMessageAr || 'نعمل حاليًا على تحديث منصة الأسعار العالمية يرجى العودة لاحقًا') : 'We are currently updating the global pricing platform, please check back later'}
         </p>
       </div>
     </div>
@@ -58,7 +61,11 @@ const AppRoutes = () => {
       <Route path="/reports" element={<Reports />} />
       <Route path="/contact" element={<Contact />} />
       <Route path="/faq" element={<FAQ />} />
+      <Route path="/privacy" element={<LegalPage />} />
+      <Route path="/terms" element={<LegalPage />} />
+      <Route path="/disclaimer" element={<LegalPage />} />
       <Route path="/services" element={<Services />} />
+      <Route path="/auth" element={<Auth />} />
       <Route path={formattedPath} element={<Admin />} />
     </Routes>
   );
@@ -104,11 +111,13 @@ function App() {
   return (
     <SettingsProvider>
       <LanguageProvider>
-        <MarketProvider>
-          <VisitorTracker />
-          <ScrollToTop />
-          <AppContent />
-        </MarketProvider>
+        <AuthProvider>
+          <MarketProvider>
+            <VisitorTracker />
+            <ScrollToTop />
+            <AppContent />
+          </MarketProvider>
+        </AuthProvider>
       </LanguageProvider>
     </SettingsProvider>
   );

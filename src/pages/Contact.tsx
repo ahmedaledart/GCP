@@ -2,10 +2,7 @@ import React, { useState } from 'react';
 import { Mail, MessageSquare, Send, User, CheckCircle, AlertCircle, Phone, MapPin, Globe, RefreshCw } from 'lucide-react';
 import { useLanguage } from '../context/LanguageContext';
 import { useSettings } from '../context/SettingsContext';
-import { 
-  db, handleFirestoreError, OperationType, logUserActivity,
-  collection, addDoc, serverTimestamp 
-} from '../lib/api';
+import { supabase } from '../lib/supabase';
 import { motion } from 'motion/react';
 
 export const Contact = () => {
@@ -24,18 +21,21 @@ export const Contact = () => {
     setStatus('sending');
 
     try {
-      const path = 'messages';
-      await addDoc(collection(db, path), {
-        ...formData,
-        createdAt: serverTimestamp(),
-        read: false
-      });
-      await logUserActivity('إرسال رسالة', `قام بإرسال رسالة بعنوان: ${formData.subject}`);
+      const { error } = await supabase.from('messages').insert([{
+        name: formData.name,
+        email: formData.email,
+        subject: formData.subject,
+        message: formData.message,
+        read: false,
+        created_at: new Date().toISOString()
+      }]);
+      
+      if (error) throw error;
 
       setStatus('success');
       setFormData({ name: '', email: '', subject: '', message: '' });
     } catch (error) {
-      handleFirestoreError(error, OperationType.CREATE, 'messages');
+      console.error('Error sending message:', error);
       setStatus('error');
     }
   };

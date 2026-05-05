@@ -1,8 +1,5 @@
 import { useEffect } from 'react';
-import { 
-  db, OperationType, handleFirestoreError,
-  doc, updateDoc, increment, getDoc, setDoc 
-} from '../lib/api';
+import { supabase } from '../lib/supabase';
 
 export const VisitorTracker = () => {
   useEffect(() => {
@@ -11,33 +8,24 @@ export const VisitorTracker = () => {
       const sessionTracked = sessionStorage.getItem('visitor_tracked');
       if (sessionTracked) return;
 
-      const statsRef = doc(db, 'stats', 'global');
-      
       try {
-        const statsDoc = await getDoc(statsRef);
+        // Increment visitor count in platform_settings
+        // We'll fetch, increment, then upsert for simplicity since Supabase increment needs RPC usually
+        const { data: settings } = await supabase.from('platform_settings').select('*').eq('key', 'total_visitors').single();
         
-        if (!statsDoc.exists()) {
-          // If the stats doc doesn't exist, we don't track but don't crash
-          return;
+        let currentCount = 0;
+        if (settings) {
+          currentCount = parseInt(settings.value as string) || 0;
         }
 
-        await updateDoc(statsRef, {
-          totalVisitors: increment(1)
-        });
+        await supabase.from('platform_settings').upsert({
+          key: 'total_visitors',
+          value: (currentCount + 1).toString()
+        }, { onConflict: 'key' });
         
         sessionStorage.setItem('visitor_tracked', 'true');
       } catch (error: any) {
-        // Handle common firestore errors silently for visitors but log internally
-        if (error.code === 'unavailable' || error.message?.includes('offline')) {
-          console.warn('Visitor tracking skipped: Backend is offline');
-          return;
-        }
-        
-        try {
-          handleFirestoreError(error, OperationType.WRITE, 'stats/global');
-        } catch (e) {
-          console.error('Visitor tracking failed:', e);
-        }
+        console.error('Visitor tracking failed:', error);
       }
     };
 

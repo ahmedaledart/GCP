@@ -7,9 +7,7 @@ import { NewsSection } from '../components/NewsSection';
 import { WhyChooseUs } from '../components/WhyChooseUs';
 import { FileText, ChevronRight, TrendingUp } from 'lucide-react';
 import { useLanguage } from '../context/LanguageContext';
-import { 
-  db, collection, query, where, orderBy, limit, getDocs 
-} from '../lib/api';
+import { supabase } from '../lib/supabase';
 import { Link } from 'react-router-dom';
 
 export const Home = () => {
@@ -19,15 +17,22 @@ export const Home = () => {
   useEffect(() => {
     const fetchLatestReport = async () => {
       try {
-        const q = query(
-          collection(db, 'reports'),
-          where('status', '==', 'published'),
-          orderBy('publishedAt', 'desc'),
-          limit(1)
-        );
-        const snapshot = await getDocs(q);
-        if (!snapshot.empty) {
-          setLatestReport({ id: snapshot.docs[0].id, ...snapshot.docs[0].data() });
+        const { data } = await supabase
+          .from('analyses')
+          .select('*')
+          .eq('status', 'published')
+          .order('created_at', { ascending: false })
+          .limit(1)
+          .single();
+        
+        if (data) {
+          setLatestReport({ 
+            id: data.id, 
+            titleAr: data.title_ar, 
+            titleEn: data.title_en,
+            contentAr: data.content_ar,
+            contentEn: data.content_en 
+          });
         }
       } catch (e) {
         console.error('Error fetching latest report:', e);

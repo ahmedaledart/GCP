@@ -16,16 +16,12 @@ import {
   PieChart, Pie, Cell, AreaChart, Area, Legend
 } from 'recharts';
 import { generateWithRetry } from '../services/geminiService';
-import { 
-  db, auth, handleFirestoreError, OperationType, signInWithPopup, 
-  googleProvider, logUserActivity, signOut, onAuthStateChanged, 
-  signInWithEmailAndPassword, collection, onSnapshot, query, orderBy, 
-  deleteDoc, doc, updateDoc, serverTimestamp, setDoc, getDoc, addDoc, getDocFromServer, getDocs 
-} from '../lib/api';
 import { supabase } from '../lib/supabase';
 import { useLanguage } from '../context/LanguageContext';
-import { SectorsTab, DataSourcesTab, ExchangeRatesTab, UsersTab, LegalTab, BackupTab, ChartsTab, AlertsTab, InterfaceTab } from '../components/admin/AdditionalTabs';
+import { SectorsTab, DataSourcesTab, ExchangeRatesTab, UsersTab, LegalTab, BackupTab, ChartsTab, AlertsTab, InterfaceTab, StatusTab } from '../components/admin/AdditionalTabs';
 import { AdminUsersTab } from '../components/admin/AdminUsersTab';
+import { PlatformUsersTab } from '../components/admin/PlatformUsersTab';
+import { PlatformSettingsTab } from '../components/admin/PlatformSettingsTab';
 
 const ADMIN_EMAIL = "ahmedhmeda67@gmail.com";
 
@@ -36,6 +32,8 @@ export const Admin = () => {
   const [isAdmin, setIsAdmin] = useState(false);
   const [activeTab, setActiveTab] = useState('dashboard');
   const [isLoggingIn, setIsLoggingIn] = useState(false);
+  const [loginEmail, setLoginEmail] = useState('');
+  const [loginPassword, setLoginPassword] = useState('');
   const [loginError, setLoginError] = useState<string | null>(null);
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
 
@@ -55,7 +53,15 @@ export const Admin = () => {
   const [messages, setMessages] = useState<any[]>([]);
   const [logs, setLogs] = useState<any[]>([]);
   const [sectors, setSectors] = useState<any[]>([]);
-  const [siteSettings, setSiteSettings] = useState<any>(null);
+  const [siteSettings, setSiteSettings] = useState<any>({
+    isSiteActive: true,
+    maintenanceMessageAr: '',
+    maintenanceMessageEn: '',
+    contactEmail: '',
+    contactPhone: '',
+    platformName: 'LIBYA MARKET'
+  });
+  const [loading, setLoading] = useState(true);
 
   // Form States
   const [editingItem, setEditingItem] = useState<any>(null);
@@ -78,52 +84,137 @@ export const Admin = () => {
   const [adminUser, setAdminUser] = useState<any>(null);
 
   useEffect(() => {
-    const unsubscribe = onAuthStateChanged(auth, async (currentUser) => {
+    // Listen to Supabase Auth changes
+    const { data: { subscription } } = supabase.auth.onAuthStateChange(async (event, session) => {
+      const currentUser = session?.user;
       setUser(currentUser);
+      
+      console.log("Auth Event:", event, "User Email:", currentUser?.email);
+      
       if (currentUser && currentUser.email) {
-        // Fallback for primary admin to guarantee access
-        if (currentUser.email === ADMIN_EMAIL) {
-          const { data, error } = await supabase.from('admin_users').select('*').eq('email', currentUser.email).single();
-          if (error && error.code === 'PGRST116') {
-             await supabase.from('admin_users').insert([{ email: currentUser.email, role: 'super_admin', is_active: true}]);
-          }
-        }
-        
-        const { data } = await supabase
+        // Core Admin email check
+        const { data: adminData, error: adminError } = await supabase
           .from('admin_users')
           .select('*')
           .eq('email', currentUser.email)
-          .eq('is_active', true)
           .single();
           
-        if (data) {
+        if (adminError && adminError.code !== 'PGRST116') {
+           console.error("Error searching admin_users:", adminError.message);
+        }
+
+        // Hardcoded super admin check
+        const isMasterAdmin = currentUser.email === ADMIN_EMAIL;
+
+        if (adminData) {
+          console.log("Admin found in database:", adminData.email, "Status:", adminData.is_active ? 'Active' : 'Inactive');
+          if (adminData.is_active) {
+            setIsAdmin(true);
+            setAdminUser(adminData);
+          } else {
+            console.log("Admin account is inactive.");
+            setIsAdmin(false);
+            setAdminUser(null);
+            if (event === 'SIGNED_IN') {
+              alert(language === 'ar' ? 'ليس لديك صلاحيات الوصول للمسؤول (حساب معطل)' : 'You do not have admin access permissions (Account disabled)');
+              await supabase.auth.signOut();
+            }
+          }
+        } else if (isMasterAdmin) {
+          // Allow master admin even if not in table
+          console.log("Master admin allowed by hardcoded email.");
           setIsAdmin(true);
-          setAdminUser(data);
+          setAdminUser({
+            email: currentUser.email,
+            role: 'super_admin',
+            is_active: true,
+            can_manage_admins: true,
+            permissions: ['*']
+          });
         } else {
+          console.log("Email not found in admin_users table.");
           setIsAdmin(false);
           setAdminUser(null);
+          // Don't sign out automatically here, just show login screen
+          // Only sign out if they were explicitly trying to log in as admin and failed
+          if (event === 'SIGNED_IN' && isLoggingIn) {
+             alert(language === 'ar' ? 'ليس لديك صلاحيات الوصول للمسؤول' : 'You do not have admin access permissions');
+             await supabase.auth.signOut();
+          }
         }
       } else {
         setIsAdmin(false);
         setAdminUser(null);
       }
     });
-    return () => unsubscribe();
-  }, []);
 
-  useEffect(() => {
-    if (!isAdmin) return;
+    // Check current session on mount
+    const checkSession = async () => {
+      try {
+        const { data: { session }, error: sessionError } = await supabase.auth.getSession();
+        if (sessionError) throw sessionError;
 
-    // Listen to Stats
-    const unsubStats = onSnapshot(doc(db, 'stats', 'global'), (doc) => {
-      if (doc.exists()) setStats(prev => ({ ...prev, ...doc.data() }));
-    });
+        if (session?.user) {
+          const currentUser = session.user;
+          setUser(currentUser);
+          
+          const { data: adminData, error: adminQueryError } = await supabase
+            .from('admin_users')
+            .select('*')
+            .eq('email', currentUser.email)
+            .single();
 
-    // Listen to Commodities via Supabase
-    const fetchAdminCommodities = async () => {
-      const { data } = await supabase.from('commodities').select('*').order('created_at', { ascending: false });
-      if (data) {
-        setCommodities(data.map(c => ({
+          if (adminData?.is_active) {
+            setIsAdmin(true);
+            setAdminUser(adminData);
+          } else if (currentUser.email === ADMIN_EMAIL) {
+            setIsAdmin(true);
+            setAdminUser({
+              email: currentUser.email,
+              role: 'super_admin',
+              is_active: true,
+              can_manage_admins: true,
+              permissions: ['*']
+            });
+          }
+        }
+      } catch (err) {
+        console.error('Check session error:', err);
+        // On session error, we don't throw, just allow guest/login view
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    checkSession();
+
+    return () => {
+      subscription.unsubscribe();
+    };
+  }, [language]);
+
+  const logUserActivity = async (action: string, details: string) => {
+    try {
+      await supabase.from('activity_logs').insert([{
+        user_email: user?.email || 'System',
+        action,
+        details,
+        timestamp: new Date().toISOString()
+      }]);
+    } catch (e) {
+      console.error('Error logging activity:', e);
+    }
+  };
+
+  const fetchData = async () => {
+    try {
+      setLoading(true);
+      
+      // Commodities
+      const { data: commData, error: commError } = await supabase.from('commodities').select('*').order('created_at', { ascending: false });
+      if (commError) throw commError;
+      if (commData) {
+        setCommodities(commData.map(c => ({
           id: String(c.id),
           nameAr: c.name_ar,
           nameEn: c.name_en,
@@ -145,104 +236,187 @@ export const Admin = () => {
           status: c.status
         })));
       }
-    };
-    fetchAdminCommodities();
+
+      // News
+      const { data: newsData, error: newsError } = await supabase.from('news').select('*').order('created_at', { ascending: false });
+      if (newsError) throw newsError;
+      if (newsData) {
+           setNews(newsData.map(n => ({
+             id: String(n.id),
+             text_ar: n.content_ar || n.title_ar,
+             text_en: n.content_en || n.title_en,
+             category: n.category,
+             is_breaking: n.is_breaking,
+             active: (n.status === 'published' || n.status === 'active') && n.is_visible !== false,
+             createdAt: n.created_at,
+             ...n
+           })));
+      }
+
+      // Sectors
+      const { data: sectorsData, error: secError } = await supabase.from('sectors').select('*').order('sort_order', { ascending: true });
+      if (secError) throw secError;
+      if (sectorsData) {
+          setSectors(sectorsData.map(s => ({
+              id: String(s.id),
+              nameAr: s.name_ar,
+              nameEn: s.name_en,
+              icon: s.icon,
+              code: s.code,
+              isVisible: s.is_visible,
+              status: s.status,
+              ...s
+          })));
+      }
+
+      // Analyses (Fixed from reports)
+      const { data: analysesData, error: anError } = await supabase.from('analyses').select('*').order('created_at', { ascending: false });
+      if (anError) throw anError;
+      if (analysesData) {
+          setReports(analysesData.map(a => ({
+              id: String(a.id),
+              titleAr: a.title_ar,
+              titleEn: a.title_en,
+              contentAr: a.content_ar,
+              contentEn: a.content_en,
+              status: a.status,
+              analysis_type: a.analysis_type,
+              sector: a.sector,
+              related_symbol: a.related_symbol,
+              is_visible: a.is_visible,
+              publishedAt: a.created_at,
+              ...a
+          })));
+      }
+
+      // Messages
+      const { data: msgData, error: msgError } = await supabase.from('messages').select('*').order('created_at', { ascending: false });
+      if (msgError) throw msgError;
+      if (msgData) {
+          setMessages(msgData.map(m => ({ id: String(m.id), ...m })));
+      }
+
+      // Logs
+      const { data: logsData } = await supabase.from('activity_logs').select('*').order('timestamp', { ascending: false }).limit(50);
+      if (logsData) {
+          setLogs(logsData.map(l => ({ id: String(l.id), timestamp: { toDate: () => new Date(l.timestamp) }, ...l })));
+      }
+
+      // Platform Settings
+      const { data: settingsData } = await supabase.from('platform_settings').select('*');
+      if (settingsData) {
+          const settingsObj = { ...siteSettings };
+          settingsData.forEach(s => {
+              if (s.key === 'platform_status') settingsObj.isSiteActive = s.value === 'open';
+              if (s.key === 'maintenance_message_ar') settingsObj.maintenanceMessageAr = s.value;
+              if (s.key === 'maintenance_message_en') settingsObj.maintenanceMessageEn = s.value;
+              if (s.key === 'contact_email') settingsObj.contactEmail = s.value;
+              if (s.key === 'contact_phone') settingsObj.contactPhone = s.value;
+              if (s.key === 'platform_name') settingsObj.platformName = s.value;
+              if (s.key === 'logo_url') settingsObj.logoUrl = s.value;
+          });
+          setSiteSettings(settingsObj);
+      }
+
+      // Stats
+      let visitorCount = 0;
+      if (settingsData) {
+        const visitorSetting = settingsData.find(s => s.key === 'total_visitors');
+        if (visitorSetting) visitorCount = parseInt(visitorSetting.value as string) || 0;
+      }
+
+      setStats({
+        totalVisitors: visitorCount,
+        totalCommodities: commData?.length || 0,
+        totalNews: newsData?.length || 0,
+        totalReports: analysesData?.length || 0,
+        totalMessages: msgData?.length || 0
+      });
+
+    } catch (e: any) {
+      console.error('Error fetching dashboard data:', e);
+      alert('Error fetching data: ' + (e.message || e.toString()));
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    if (!isAdmin) return;
     
-    const commoditiesSubscription = supabase
-      .channel('admin-commodities-channel')
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'commodities' }, () => {
-        fetchAdminCommodities();
+    fetchData();
+
+
+    // Realtime Subscriptions
+    const channel = supabase
+      .channel('admin_realtime')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'commodities' }, (payload) => {
+          console.log('Realtime update: commodities', payload);
+          fetchData();
+      })
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'news' }, (payload) => {
+          console.log('Realtime update: news', payload);
+          fetchData();
+      })
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'sectors' }, (payload) => {
+          console.log('Realtime update: sectors', payload);
+          fetchData();
+      })
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'analyses' }, (payload) => {
+          console.log('Realtime update: analyses', payload);
+          fetchData();
+      })
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'platform_settings' }, (payload) => {
+          console.log('Realtime update: platform_settings', payload);
+          fetchData();
+      })
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'messages' }, (payload) => {
+          console.log('Realtime update: messages', payload);
+          fetchData();
+      })
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'activity_logs' }, (payload) => {
+          console.log('Realtime update: logs', payload);
+          fetchData();
       })
       .subscribe();
-
-    // Listen to News via Supabase
-    const fetchAdminNews = async () => {
-      const { data } = await supabase.from('news').select('*').order('created_at', { ascending: false });
-      if (data) {
-        setNews(data.map(n => ({
-          id: String(n.id),
-          text_ar: n.content_ar || n.title_ar,     // handle both title and content if mapped differently
-          text_en: n.content_en || n.title_en,
-          category: n.category,
-          is_breaking: n.is_breaking,
-          active: n.status === 'published' && n.is_visible !== false,
-          createdAt: n.created_at,
-          ...n
-        })));
-      }
-    };
-    fetchAdminNews();
-    
-    const newsSubscription = supabase
-      .channel('admin-news-channel')
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'news' }, () => {
-        fetchAdminNews();
-      })
-      .subscribe();
-
-    // Listen to Reports
-    const unsubReports = onSnapshot(query(collection(db, 'reports'), orderBy('publishedAt', 'desc')), (snap) => {
-      setReports(snap.docs.map(d => ({ id: d.id, ...d.data() })));
-    });
-
-    // Listen to Messages
-    const unsubMessages = onSnapshot(query(collection(db, 'messages'), orderBy('createdAt', 'desc')), (snap) => {
-      setMessages(snap.docs.map(d => ({ id: d.id, ...d.data() })));
-    });
-
-    // Listen to Logs
-    const unsubLogs = onSnapshot(query(collection(db, 'activity_logs'), orderBy('timestamp', 'desc')), (snap) => {
-      setLogs(snap.docs.map(d => ({ id: d.id, ...d.data() })));
-    });
-
-    // Listen to Sectors
-    const unsubSectors = onSnapshot(collection(db, 'sectors'), (snap) => {
-      setSectors(snap.docs.map(d => ({ id: d.id, ...d.data() })));
-    });
-
-    // Fetch Settings Once
-    const fetchSettings = async () => {
-      try {
-        const settingsDoc = await getDocFromServer(doc(db, 'settings', 'global'));
-        if (settingsDoc.exists()) {
-          setSiteSettings(settingsDoc.data());
-        }
-      } catch (e) {
-        console.error(e);
-      }
-    };
-    fetchSettings();
 
     return () => {
-      unsubStats();
-      if (commoditiesSubscription) supabase.removeChannel(commoditiesSubscription);
-      if (newsSubscription) supabase.removeChannel(newsSubscription);
-      unsubReports();
-      unsubMessages();
-      unsubLogs();
-      unsubSectors();
+      supabase.removeChannel(channel);
     };
   }, [isAdmin]);
 
-  const handleGoogleLogin = async () => {
+  const handleEmailLogin = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!loginEmail || !loginPassword) return;
+
     try {
       setIsLoggingIn(true);
       setLoginError(null);
-      const result = await signInWithPopup(auth, googleProvider);
       
-      const { data } = await supabase
+      const { data: authData, error: authError } = await supabase.auth.signInWithPassword({
+        email: loginEmail,
+        password: loginPassword
+      });
+
+      if (authError) throw authError;
+      
+      const { data: adminData } = await supabase
         .from('admin_users')
         .select('*')
-        .eq('email', result.user.email)
+        .eq('email', authData.user?.email)
         .eq('is_active', true)
         .single();
         
-      if (!data && result.user.email !== ADMIN_EMAIL) {
+      if (!adminData && authData.user?.email !== ADMIN_EMAIL) {
         setLoginError(t('noAdminAccess'));
-        await signOut(auth);
+        await supabase.auth.signOut();
       }
     } catch (error: any) {
-      setLoginError(error.message);
+      let msg = error.message;
+      if (error.status === 400) {
+        msg = language === 'ar' ? 'البريد أو كلمة المرور غير صحيحة' : 'Invalid email or password';
+      }
+      setLoginError(msg);
     } finally {
       setIsLoggingIn(false);
     }
@@ -250,7 +424,7 @@ export const Admin = () => {
 
   const handleLogout = async () => {
     try {
-      await signOut(auth);
+      await supabase.auth.signOut();
       navigate('/');
     } catch (e) {
       console.error(e);
@@ -276,16 +450,81 @@ export const Admin = () => {
             {language === 'ar' ? 'يتطلب الوصول تصريح خاص' : 'Authorization required'}
           </p>
           
-          <div className="space-y-4">
+          <form onSubmit={handleEmailLogin} className="space-y-4">
+            {loginError && (
+              <div className="p-4 bg-red-500/10 border border-red-500/20 rounded-2xl">
+                 <p className="text-red-500 text-[10px] font-bold leading-relaxed">{loginError}</p>
+                 <button 
+                   type="button"
+                   onClick={async () => {
+                     await supabase.auth.signOut();
+                     window.location.reload();
+                   }}
+                   className="mt-2 text-[9px] text-[#D4AF37] underline uppercase font-black"
+                 >
+                   {language === 'ar' ? 'إعادة تعيين الجلسة' : 'Reset Session'}
+                 </button>
+              </div>
+            )}
+            <div className="space-y-2">
+              <label className="text-[10px] font-black text-gray-500 uppercase tracking-widest px-1">
+                {language === 'ar' ? 'البريد الإلكتروني' : 'Email Address'}
+              </label>
+              <div className="relative">
+                <Mail className="absolute left-4 top-1/2 -translate-y-1/2 text-gray-400" size={18} />
+                <input 
+                  type="email" 
+                  value={loginEmail}
+                  onChange={(e) => setLoginEmail(e.target.value)}
+                  className="w-full h-14 bg-[#121E3D] border border-[#1C2E5A] rounded-2xl px-12 text-white focus:border-[#D4AF37] outline-none font-bold transition-all"
+                  placeholder="admin@platform.com"
+                  required
+                />
+              </div>
+            </div>
+
+            <div className="space-y-2">
+              <label className="text-[10px] font-black text-gray-500 uppercase tracking-widest px-1">
+                {language === 'ar' ? 'كلمة المرور' : 'Password'}
+              </label>
+              <div className="relative">
+                <Lock className="absolute left-4 top-1/2 -translate-y-1/2 text-gray-400" size={18} />
+                <input 
+                  type="password" 
+                  value={loginPassword}
+                  onChange={(e) => setLoginPassword(e.target.value)}
+                  className="w-full h-14 bg-[#121E3D] border border-[#1C2E5A] rounded-2xl px-12 text-white focus:border-[#D4AF37] outline-none font-bold transition-all"
+                  placeholder="••••••••"
+                  required
+                />
+              </div>
+            </div>
+
             <button
-              onClick={handleGoogleLogin}
+              type="submit"
               disabled={isLoggingIn}
-              className="w-full h-14 flex items-center justify-center gap-4 bg-white hover:bg-gray-100 text-[#0A1128] font-black rounded-2xl transition-all transform hover:scale-[1.02] active:scale-[0.98] disabled:opacity-50 shadow-xl"
+              className="w-full h-14 flex items-center justify-center gap-4 bg-[#D4AF37] hover:bg-[#E5C158] text-[#0A1128] font-black rounded-2xl transition-all transform hover:scale-[1.01] active:scale-[0.99] disabled:opacity-50 shadow-xl shadow-[#D4AF37]/10"
             >
-              <img src="https://www.google.com/favicon.ico" alt="Google" className="w-6 h-6" />
-              <span className="uppercase tracking-tight text-sm">{isLoggingIn ? (language === 'ar' ? 'جاري التحقق...' : 'Verifying...') : (language === 'ar' ? 'الدخول عبر جوجل' : 'Enter with Google')}</span>
+              {isLoggingIn ? (
+                <div className="w-6 h-6 border-2 border-[#0A1128] border-t-transparent rounded-full animate-spin"></div>
+              ) : (
+                <span className="uppercase tracking-widest text-sm">{language === 'ar' ? 'تسجيل الدخول' : 'Sign In'}</span>
+              )}
             </button>
-          </div>
+          </form>
+
+          {user && (
+            <button 
+              onClick={async () => {
+                await supabase.auth.signOut();
+                window.location.reload();
+              }}
+              className="w-full mt-6 flex items-center justify-center gap-2 text-gray-500 hover:text-white transition-all text-[10px] font-black uppercase tracking-widest"
+            >
+              <LogOut size={14} />
+              {language === 'ar' ? 'تسجيل الخروج من الجلسة الحالية' : 'Log out from current session'}
+            </button>
+          )}
           
           {loginError && (
             <div className="mt-6 p-4 bg-red-500/10 border border-red-500/20 rounded-2xl text-red-500 text-[10px] font-black uppercase text-center flex items-center justify-center gap-2">
@@ -305,160 +544,161 @@ export const Admin = () => {
     );
   }
 
-  const handleExcelImportClick = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-    setImportConfig({ ...importConfig, file });
-    setShowImportModal(true);
-    e.target.value = '';
+  const downloadCSVTemplate = () => {
+    const headers = "symbol,name_ar,name_en,sector,price,previous_price,high,low,unit,source,status,is_visible";
+    const blob = new Blob([new Uint8Array([0xEF, 0xBB, 0xBF]), headers], { type: 'text/csv;charset=utf-8;' });
+    const link = document.createElement('a');
+    link.href = URL.createObjectURL(blob);
+    link.setAttribute('download', 'commodities_template.csv');
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
   };
 
   const processExcelImport = async () => {
-    const { file, sectorAr, sectorEn, currency } = importConfig;
+    const { file } = importConfig;
     if (!file) return;
 
     const reader = new FileReader();
     reader.onload = async (evt) => {
       try {
         const bstr = evt.target?.result;
-        const wb = XLSX.read(bstr, { type: 'binary' });
+        const wb = XLSX.read(bstr, { type: 'array' });
         const wsname = wb.SheetNames[0];
         const ws = wb.Sheets[wsname];
-        const data = XLSX.utils.sheet_to_json(ws);
+        const rawRows = XLSX.utils.sheet_to_json(ws);
+        
+        console.log("rawRows:", rawRows);
 
-        const sectorsSnap = await getDocs(collection(db, 'sectors'));
-        const dbSectors = sectorsSnap.docs.map(d => d.data());
-        const validSectorsAr = dbSectors.map(s => s.nameAr?.trim()?.toLowerCase());
-        const validSectorsEn = dbSectors.map(s => s.nameEn?.trim()?.toLowerCase());
-        const validCurrencies = ['usd', 'eur', 'lyd', 'دولار', 'يورو', 'دينار ليبي', 'دينار'];
+        // Fetch valid sector codes
+        const { data: dbSectors, error: sectorError } = await supabase.from('sectors').select('code');
+        if (sectorError) throw sectorError;
+        const validSectorCodes = new Set((dbSectors || []).map(s => String(s.code || '').trim()));
 
-        let addedCount = 0;
-        let updatedCount = 0;
-        let errorCount = 0;
-        const errorDetails: string[] = [];
-        const processedSymbols = new Set<string>();
+        const validRows: any[] = [];
+        const invalidRows: { rowNumber: number; symbol: string; reason: string }[] = [];
+        const cleanedRows: any[] = [];
 
-        for (let i = 0; i < data.length; i++) {
-          const item = data[i] as any;
-          const rowNumber = i + 2; // Assuming row 1 is header
-          const symbolStr = item.symbol || item['الرمز'] || item['Code'] || item['Symbol'] || '';
-          const symbol = String(symbolStr).trim();
+        rawRows.forEach((row: any, index: number) => {
+          const rowNumber = index + 2; // Assuming row 1 is header
           
-          if (!symbol) {
-            errorCount++;
-            errorDetails.push(`Row ${rowNumber}: Missing symbol (الرمز)`);
-            continue;
-          }
+          let {
+            symbol, name_ar, name_en, sector, price, previous_price, high, low, unit, source, status, is_visible
+          } = row;
 
-          if (processedSymbols.has(symbol)) {
-            errorCount++;
-            errorDetails.push(`Row ${rowNumber}: Duplicate symbol in file (${symbol})`);
-            continue;
-          }
-          processedSymbols.add(symbol);
+          // Mapping different possible header names
+          symbol = symbol || row['الرمز'] || row['Code'] || row['Symbol'];
+          name_ar = name_ar || row['الاسم بالعربية'] || row['الاسم'] || row['السلعة'];
+          name_en = name_en || row['الاسم بالإنجليزية'] || row['Name'] || row['Commodity'];
+          sector = sector || row['القطاع'] || row['التصنيف'] || row['Sector'];
+          price = price || row['السعر'] || row['Price'];
+          previous_price = previous_price || row['السعر السابق'] || row['Previous Price'];
+          high = high || row['الأعلى'] || row['High'];
+          low = low || row['الأدنى'] || row['Low'];
+          unit = unit || row['الوحدة'] || row['Unit'];
+          source = source || row['المصدر'] || row['Source'];
+          status = status || row['الحالة'] || row['Status'];
+          is_visible = is_visible !== undefined ? is_visible : row['مرئي'];
 
-          const rawPrice = item.price || item['السعر'] || item['Price'];
-          const priceStr = String(rawPrice).replace(/,/g, '');
-          const priceNum = Number(priceStr);
+          // Cleaning and Parsing
+          const cleanSymbol = String(symbol || '').trim().toUpperCase();
+          const cleanSector = String(sector || '').trim();
+          const cleanNameAr = String(name_ar || '').trim();
+          const cleanNameEn = String(name_en || '').trim();
+          const parsedPrice = typeof price === 'number' ? price : Number(String(price || 0).replace(/,/g, ''));
           
-          if (rawPrice === undefined || rawPrice === null || isNaN(priceNum) || priceNum < 0) {
-            errorCount++;
-            errorDetails.push(`Row ${rowNumber}: Invalid price for ${symbol}`);
-            continue;
+          // Validation
+          if (!cleanSymbol) {
+            invalidRows.push({ rowNumber, symbol: '', reason: 'Missing symbol' });
+            return;
+          }
+          if (!cleanNameAr) {
+            invalidRows.push({ rowNumber, symbol: cleanSymbol, reason: 'Missing Arabic name' });
+            return;
+          }
+          if (!cleanSector) {
+            invalidRows.push({ rowNumber, symbol: cleanSymbol, reason: 'Missing sector' });
+            return;
+          }
+          if (isNaN(parsedPrice) || parsedPrice <= 0) {
+            invalidRows.push({ rowNumber, symbol: cleanSymbol, reason: 'Invalid price' });
+            return;
+          }
+          if (!validSectorCodes.has(cleanSector)) {
+            invalidRows.push({ rowNumber, symbol: cleanSymbol, reason: 'Invalid sector' });
+            return;
           }
 
-          const rawChange = item.changePercent || item['التغير المئوي'] || item['Change'];
-          let changeNum = 0;
-          if (rawChange !== undefined && rawChange !== null) {
-            const changeStr = String(rawChange).replace(/%/g, '');
-            changeNum = Number(changeStr);
-            if (isNaN(changeNum)) {
-               errorCount++;
-               errorDetails.push(`Row ${rowNumber}: Invalid change percentage for ${symbol}`);
-               continue;
-            }
-          }
-
-          const sectorAr = (item.sectorAr || item['القطاع بالعربية'] || item['القطاع'] || item['التصنيف'] || importConfig.sectorAr || '').trim();
-          const sectorEn = (item.sectorEn || item['Sector'] || item['Category'] || importConfig.sectorEn || '').trim();
-
-          const normalizedSectorAr = sectorAr.toLowerCase();
-          const normalizedSectorEn = sectorEn.toLowerCase();
-
-          if (sectorAr && !validSectorsAr.includes(normalizedSectorAr)) {
-            errorCount++;
-            errorDetails.push(`Row ${rowNumber}: Unknown sector (AR) '${sectorAr}' for ${symbol}. Please add it in Sectors tab first.`);
-            continue;
-          }
-
-          if (sectorEn && !validSectorsEn.includes(normalizedSectorEn)) {
-            errorCount++;
-            errorDetails.push(`Row ${rowNumber}: Unknown sector (EN) '${sectorEn}' for ${symbol}. Please add it in Sectors tab first.`);
-            continue;
-          }
-
-          const currency = (item.currency || item['العملة'] || item['Currency'] || importConfig.currency || '').trim();
-          if (currency && !validCurrencies.includes(currency.toLowerCase())) {
-            errorCount++;
-            errorDetails.push(`Row ${rowNumber}: Invalid currency '${currency}' for ${symbol}. Must be USD, EUR, or LYD.`);
-            continue;
-          }
-
-          let previousPrice = priceNum;
-          if (changeNum !== 0) {
-              previousPrice = priceNum / (1 + (changeNum / 100));
-          }
+          // Defaults & Extra cleaning
+          const parsedPrevPrice = previous_price !== undefined ? Number(String(previous_price).replace(/,/g, '')) : parsedPrice;
+          const parsedHigh = high !== undefined ? Number(String(high).replace(/,/g, '')) : parsedPrice;
+          const parsedLow = low !== undefined ? Number(String(low).replace(/,/g, '')) : parsedPrice;
           
-          const changeValue = priceNum - previousPrice;
-          
-          const commodityData = {
-            name_ar: item.nameAr || item['الاسم بالعربية'] || item['الاسم'] || item['السلعة'] || '',
-            name_en: item.nameEn || item['Name'] || item['Commodity'] || '',
-            symbol: symbol,
-            sector: sectorAr,
-            price: priceNum,
-            previous_price: previousPrice,
-            change_value: changeValue,
-            change_percent: changeNum,
-            trend: changeNum >= 0 ? 'up' : 'down',
-            high: priceNum,
-            low: priceNum,
-            unit: item.unit || item['الوحدة'] || item['Unit'] || '',
-            source: item.source || item['المصدر'] || item['Source'] || '',
-            status: 'active',
-            is_visible: true,
+          // Calculations
+          const change_value = parsedPrice - parsedPrevPrice;
+          const change_percent = parsedPrevPrice > 0 ? ((parsedPrice - parsedPrevPrice) / parsedPrevPrice) * 100 : 0;
+          const trend = parsedPrice > parsedPrevPrice ? 'up' : (parsedPrice < parsedPrevPrice ? 'down' : 'neutral');
+
+          const payload = {
+            symbol: cleanSymbol,
+            name_ar: cleanNameAr,
+            name_en: cleanNameEn || cleanNameAr,
+            sector: cleanSector,
+            price: parsedPrice,
+            previous_price: isNaN(parsedPrevPrice) ? parsedPrice : parsedPrevPrice,
+            change_value,
+            change_percent,
+            trend,
+            high: isNaN(parsedHigh) ? parsedPrice : parsedHigh,
+            low: isNaN(parsedLow) ? parsedPrice : parsedLow,
+            unit: String(unit || '').trim(),
+            source: String(source || 'Manual Entry').trim(),
+            status: String(status || 'active').trim(),
+            is_visible: !(is_visible === false || is_visible === 'false' || is_visible === 0 || is_visible === '0'),
             updated_at: new Date().toISOString()
           };
 
-          // Check if it already exists
-          const existing = commodities.find(c => c.symbol === symbol);
+          cleanedRows.push(payload);
+          validRows.push(payload);
+        });
+
+        console.log("cleanedRows:", cleanedRows);
+        console.log("validRows:", validRows);
+        console.log("invalidRows:", invalidRows);
+
+        if (validRows.length > 0) {
+          const { data: supabaseResult, error: supabaseError } = await supabase
+            .from('commodities')
+            .upsert(validRows, { onConflict: 'symbol' });
           
-          if (existing) {
-            await supabase.from('commodities').update(commodityData).eq('id', existing.id);
-            updatedCount++;
-          } else {
-            await supabase.from('commodities').insert([commodityData]);
-            addedCount++;
+          console.log("supabaseResult:", supabaseResult);
+          if (supabaseError) {
+            console.error("supabaseError:", supabaseError);
+            throw supabaseError;
           }
         }
-        
-        const message = language === 'ar' 
-          ? `تم الاستيراد: ${addedCount} جديد، ${updatedCount} تحديث. ${errorCount > 0 ? `فشل: ${errorCount}` : ''}`
-          : `Import complete: ${addedCount} new, ${updatedCount} updated. ${errorCount > 0 ? `Failed: ${errorCount}` : ''}`;
-        
-        setImportFeedback({ message, errors: errorDetails });
-          
-        logUserActivity('استيراد بيانات', `استيراد من ملف: ${addedCount} جديد، ${updatedCount} تحديث`);
-      } catch (error: any) {
-        console.error(error);
-        const errorMessage = error?.message || t('importError');
+
+        const successMsgAr = `تم استيراد ${validRows.length} سلعة بنجاح. فشل: ${invalidRows.length}`;
+        const successMsgEn = `Imported ${validRows.length} commodities successfully. Failed: ${invalidRows.length}`;
+
+        setImportFeedback({
+          message: language === 'ar' ? successMsgAr : successMsgEn,
+          errors: invalidRows.map(r => `Row ${r.rowNumber} (${r.symbol || '??'}): ${r.reason}`)
+        });
+
+        fetchData();
+        setImportConfig({ ...importConfig, file: null });
+        logUserActivity('استيراد بيانات', `استيراد من ملف: ${validRows.length} ناجح، ${invalidRows.length} فشل`);
+
+      } catch (err: any) {
+        console.error("Import Exception:", err);
         setImportFeedback({ 
-          message: language === 'ar' ? 'حدث خطأ أثناء الاستيراد' : 'Error occurred during import', 
-          errors: [errorMessage] 
+          message: language === 'ar' ? `حدث خطأ: ${err.message}` : `Error: ${err.message}`,
+          errors: [err.message]
         });
       }
     };
-    reader.readAsBinaryString(file);
+    reader.readAsArrayBuffer(file);
   };
 
   // Chart Data Processing
@@ -471,7 +711,7 @@ export const Admin = () => {
 
     return last7Days.map(date => ({
       name: date,
-      activity: logs.filter(l => l.timestamp?.toDate().toISOString().split('T')[0] === date).length
+      activity: logs.filter(l => l.timestamp && new Date(l.timestamp).toISOString().split('T')[0] === date).length
     }));
   };
 
@@ -486,8 +726,59 @@ export const Admin = () => {
 
   const COLORS = ['#D4AF37', '#1C2E5A', '#22C55E', '#A855F7', '#EF4444', '#3B82F6'];
 
+  const testSupabaseSave = async () => {
+    try {
+      const payload = {
+        symbol: 'DASHBOARDTEST',
+        name_ar: 'اختبار من لوحة التحكم',
+        name_en: 'Dashboard Test',
+        sector: 'energy',
+        price: 500,
+        previous_price: 450,
+        change_value: 50,
+        change_percent: 11.11,
+        trend: 'up',
+        high: 520,
+        low: 430,
+        unit: 'unit',
+        source: 'Admin Dashboard',
+        status: 'active',
+        is_visible: true,
+        updated_at: new Date().toISOString()
+      };
+
+      console.log('SUPABASE TEST PAYLOAD:', payload);
+
+      const { data, error } = await supabase
+        .from('commodities')
+        .upsert(payload, { onConflict: 'symbol' })
+        .select();
+
+      console.log('SUPABASE TEST DATA:', data);
+      console.log('SUPABASE TEST ERROR:', error);
+
+      if (error) {
+        alert('Error: ' + error.message);
+      } else {
+        alert('تم الحفظ في Supabase بنجاح');
+        await fetchData();
+      }
+    } catch (err: any) {
+      console.error('SUPABASE CATCH ERROR:', err);
+      alert('Exception: ' + err.message);
+    }
+  };
+
   const DashboardTab = () => (
     <div className="space-y-8">
+      <div className="mb-4">
+        <button 
+          onClick={testSupabaseSave}
+          className="bg-purple-600 hover:bg-purple-500 text-white font-bold py-3 px-6 rounded-2xl w-full md:w-auto shadow-xl"
+        >
+          {language === 'ar' ? 'اختبار الاتصال والحفظ في Supabase' : 'Test Supabase Connection & Save'}
+        </button>
+      </div>
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
         <StatsCard icon={<Users />} label={t('totalVisitors')} value={stats.totalVisitors} color="blue" />
         <StatsCard icon={<TrendingUp />} label={t('activeCommodities')} value={commodities.length} color="gold" />
@@ -542,7 +833,7 @@ export const Admin = () => {
                 <div className="flex-1">
                   <div className="flex justify-between items-start">
                     <h4 className="text-white font-bold text-xs uppercase">{log.action}</h4>
-                    <span className="text-[10px] text-gray-500">{log.timestamp?.toDate().toLocaleTimeString()}</span>
+                    <span className="text-[10px] text-gray-500">{log.timestamp && new Date(log.timestamp).toLocaleTimeString()}</span>
                   </div>
                   <p className="text-[11px] text-gray-400 mt-1">{log.details}</p>
                 </div>
@@ -622,7 +913,13 @@ export const Admin = () => {
               <NavItem active={activeTab === 'analyses'} icon={<FileBarChart />} label={language === 'ar' ? 'إدارة التحليلات' : 'Analyses'} onClick={() => { setActiveTab('analyses'); setIsMobileMenuOpen(false); }} language={language} />
             )}
             {(adminUser?.role === 'super_admin' || adminUser?.permissions?.includes('admin_users')) && (
-              <NavItem active={activeTab === 'admin_users'} icon={<Users />} label={language === 'ar' ? 'إدارة الأدمن' : 'Admin Users'} onClick={() => { setActiveTab('admin_users'); setIsMobileMenuOpen(false); }} language={language} />
+              <NavItem active={activeTab === 'admin_users'} icon={<Shield />} label={language === 'ar' ? 'إدارة الأدمن' : 'Admin Users'} onClick={() => { setActiveTab('admin_users'); setIsMobileMenuOpen(false); }} language={language} />
+            )}
+            {(adminUser?.role === 'super_admin' || adminUser?.can_manage_admins || adminUser?.permissions?.includes('admin_users')) && (
+              <NavItem active={activeTab === 'platform_users'} icon={<Users />} label={language === 'ar' ? 'إدارة مستخدمي المنصة' : 'Platform Users'} onClick={() => { setActiveTab('platform_users'); setIsMobileMenuOpen(false); }} language={language} />
+            )}
+            {(adminUser?.role === 'super_admin' || adminUser?.can_manage_admins) && (
+              <NavItem active={activeTab === 'platform_settings'} icon={<Settings />} label={language === 'ar' ? 'إعدادات المنصة' : 'Platform Settings'} onClick={() => { setActiveTab('platform_settings'); setIsMobileMenuOpen(false); }} language={language} />
             )}
           </div>
 
@@ -701,6 +998,7 @@ export const Admin = () => {
               transition={{ duration: 0.3, ease: "easeOut" }}
             >
               {activeTab === 'dashboard' && <DashboardTab />}
+              {activeTab === 'platform_status' && <StatusTab />}
               {activeTab === 'commodities' && (
                 <div className="space-y-8">
                   <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-6">
@@ -832,18 +1130,30 @@ export const Admin = () => {
                                 <div className="flex items-center justify-center gap-2">
                                   <button 
                                     onClick={async () => {
-                                      const { error } = await supabase.from('commodities').update({ is_visible: !item.isVisible }).eq('id', item.id);
-                                      if (error) { console.error(error); alert('Failed to update visibility'); }
+                                      try {
+                                        const { error } = await supabase.from('commodities').update({ is_visible: !item.isVisible }).eq('id', item.id);
+                                        if (error) throw error;
+                                        fetchData();
+                                      } catch (err: any) {
+                                        alert(err.message);
+                                      }
                                     }}
                                     className={`w-10 h-10 flex items-center justify-center rounded-xl transition-all border ${item.isVisible ? 'text-green-500 hover:bg-green-500/10 border-transparent hover:border-green-500/20' : 'text-gray-500 hover:bg-gray-500/10 border-transparent hover:border-gray-500/20'}`}
                                   >
                                     {item.isVisible ? <ToggleRight size={24} /> : <ToggleLeft size={24} />}
                                   </button>
                                   <button onClick={() => setEditingItem({ type: 'commodity', data: item })} className="w-10 h-10 flex items-center justify-center text-blue-400 hover:bg-blue-400/10 rounded-xl transition-all border border-transparent hover:border-blue-400/20"><Settings size={18} /></button>
-                                  <button onClick={async () => { if(confirm(t('areYouSure'))) { 
-                                    const { error } = await supabase.from('commodities').delete().eq('id', item.id);
-                                    if (error) { console.error(error); alert('Failed to delete'); }
-                                  } }} className="w-10 h-10 flex items-center justify-center text-red-500 hover:bg-red-500/10 rounded-xl transition-all border border-transparent hover:border-red-500/20"><Trash2 size={18} /></button>
+                                  <button onClick={async () => { 
+                                    if(confirm(language === 'ar' ? 'هل أنت متأكد؟' : 'Are you sure?')) { 
+                                      try {
+                                        const { error } = await supabase.from('commodities').delete().eq('id', item.id);
+                                        if (error) throw error;
+                                        fetchData();
+                                      } catch (err: any) {
+                                        alert(err.message);
+                                      }
+                                    } 
+                                  }} className="w-10 h-10 flex items-center justify-center text-red-500 hover:bg-red-500/10 rounded-xl transition-all border border-transparent hover:border-red-500/20"><Trash2 size={18} /></button>
                                 </div>
                               </td>
                             </motion.tr>
@@ -916,30 +1226,40 @@ export const Admin = () => {
                             <div className="text-gray-500 text-[10px] font-bold uppercase italic tracking-wide">{item.text_en}</div>
                            </div>
                         </div>
-                        <div className="flex items-center gap-4 mr-4">
-                          <button 
-                            onClick={async () => {
-                              const newStatus = item.active ? 'hidden' : 'published';
-                              const { error } = await supabase.from('news').update({ status: newStatus }).eq('id', item.id);
-                              if (error) console.error(error);
-                            }}
-                            className={`w-12 h-12 flex items-center justify-center rounded-2xl transition-all border ${item.active ? 'text-green-500 bg-green-500/5 border-green-500/20' : 'text-gray-500 bg-gray-500/5 border-gray-500/20'}`}
-                          >
-                            {item.active ? <ToggleRight size={28} /> : <ToggleLeft size={28} />}
-                          </button>
-                          <button onClick={() => setEditingItem({ type: 'news', data: item })} className="w-12 h-12 flex items-center justify-center bg-[#121E3D] text-blue-400 border border-[#1C2E5A] rounded-2xl hover:border-blue-400/30 transition-all"><Settings size={18} /></button>
-                          <button 
+                         <div className="flex items-center gap-4 mr-4">
+                           <button 
                              onClick={async () => {
-                              if(confirm(t('deleteNewsConfirm'))) {
-                                const { error } = await supabase.from('news').delete().eq('id', item.id);
-                                if (error) console.error(error);
-                              }
-                            }}
-                            className="w-12 h-12 flex items-center justify-center text-red-500 hover:bg-red-500/10 rounded-2xl transition-all border border-transparent hover:border-red-500/20"
-                          >
-                            <Trash2 size={20} />
-                          </button>
-                        </div>
+                               try {
+                                 const newIsVisible = !item.is_visible;
+                                 const { error } = await supabase.from('news').update({ is_visible: newIsVisible }).eq('id', item.id);
+                                 if (error) throw error;
+                                 fetchData();
+                               } catch (err: any) {
+                                 alert(err.message);
+                               }
+                             }}
+                             className={`w-12 h-12 flex items-center justify-center rounded-2xl transition-all border ${item.is_visible ? 'text-green-500 bg-green-500/5 border-green-500/20' : 'text-gray-500 bg-gray-500/5 border-gray-500/20'}`}
+                           >
+                             {item.is_visible ? <ToggleRight size={28} /> : <ToggleLeft size={28} />}
+                           </button>
+                           <button onClick={() => setEditingItem({ type: 'news', data: item })} className="w-12 h-12 flex items-center justify-center bg-[#121E3D] text-blue-400 border border-[#1C2E5A] rounded-2xl hover:border-blue-400/30 transition-all"><Settings size={18} /></button>
+                           <button 
+                              onClick={async () => {
+                               if(confirm(language === 'ar' ? 'هل أنت متأكد؟' : 'Are you sure?')) {
+                                 try {
+                                   const { error } = await supabase.from('news').delete().eq('id', item.id);
+                                   if (error) throw error;
+                                   fetchData();
+                                 } catch (err: any) {
+                                   alert(err.message);
+                                 }
+                               }
+                             }}
+                             className="w-12 h-12 flex items-center justify-center text-red-500 hover:bg-red-500/10 rounded-2xl transition-all border border-transparent hover:border-red-500/20"
+                           >
+                             <Trash2 size={20} />
+                           </button>
+                         </div>
                       </motion.div>
                       ))
                     )}
@@ -956,10 +1276,75 @@ export const Admin = () => {
                       <div>
                         <h3 className="text-xl font-black text-white uppercase tracking-tight">{language === 'ar' ? 'إدارة التحليلات' : 'Analyses Management'}</h3>
                         <p className="text-[10px] font-bold text-gray-500 uppercase tracking-widest mt-1">
-                          {language === 'ar' ? 'التحليلات قريباً' : 'Analyses Coming Soon'}
+                          {language === 'ar' ? 'نشر التقارير والتحليلات للسوق' : 'Publish market reports and analyses'}
                         </p>
                       </div>
                     </div>
+                    <button 
+                      onClick={() => setEditingItem({ 
+                        type: 'analysis', 
+                        data: { titleAr: '', titleEn: '', contentAr: '', contentEn: '', status: 'published', is_visible: true, analysis_type: 'technical' } 
+                      })}
+                      className="flex items-center gap-2 bg-[#D4AF37] text-[#0A1128] px-6 py-4 rounded-xl font-black hover:bg-[#E5C158] transition-all text-[10px] uppercase tracking-widest shadow-xl shadow-[#D4AF37]/10"
+                    >
+                      <Plus size={18} /> {language === 'ar' ? 'تحليل جديد' : 'New Analysis'}
+                    </button>
+                  </div>
+
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
+                    {reports.length === 0 ? (
+                       <div className="md:col-span-2 text-center py-20 bg-[#0A1128] rounded-[2.5rem] border border-[#1C2E5A] border-dashed">
+                        <FileBarChart className="mx-auto text-gray-700 mb-4" size={48} />
+                        <p className="text-gray-500 uppercase tracking-[0.3em] font-black text-xs">{language === 'ar' ? 'لا توجد تحليلات حاليا' : 'No analyses found'}</p>
+                      </div>
+                    ) : reports.map(report => (
+                      <motion.div 
+                        initial={{ opacity: 0, y: 15 }}
+                        animate={{ opacity: 1, y: 0 }}
+                        key={report.id} 
+                        className="bg-[#0A1128] p-8 rounded-[2rem] border border-[#1C2E5A] group hover:border-[#D4AF37]/30 transition-all shadow-2xl flex flex-col justify-between"
+                      >
+                        <div>
+                          <div className="flex justify-between items-start mb-6">
+                            <h4 className="text-xl font-black uppercase tracking-tight text-white group-hover:text-[#D4AF37] transition-colors flex-1 leading-tight">
+                              {language === 'ar' ? report.titleAr : report.titleEn}
+                            </h4>
+                            <span className={`px-3 py-1 rounded-lg text-[8px] font-black uppercase tracking-[0.2em] border ${report.status === 'published' ? 'bg-green-500/5 text-green-500 border-green-500/20' : 'bg-yellow-500/5 text-yellow-500 border-yellow-500/20'} ml-4 shrink-0 shadow-sm`}>
+                              {report.status === 'published' ? (language === 'ar' ? 'منشور' : 'Published') : (language === 'ar' ? 'مسودة' : 'Draft')}
+                            </span>
+                          </div>
+                          <p className="text-xs text-gray-500 leading-relaxed line-clamp-3 italic mb-8 font-serif">
+                            {language === 'ar' ? report.contentAr : report.contentEn}
+                          </p>
+                        </div>
+                        <div className="flex justify-between items-center pt-6 border-t border-[#1C2E5A]/30">
+                          <div className="flex items-center gap-2 text-[10px] text-gray-600 font-black uppercase tracking-widest">
+                            <Calendar size={12} className="text-[#D4AF37]/60" />
+                            {new Date(report.publishedAt).toLocaleDateString()}
+                          </div>
+                          <div className="flex gap-2">
+                            <button onClick={() => setEditingItem({ type: 'analysis', data: report })} className="w-11 h-11 flex items-center justify-center bg-[#121E3D] text-blue-400 border border-[#1C2E5A] rounded-xl hover:border-blue-400/30 transition-all"><Settings size={18} /></button>
+                            <button onClick={async () => { 
+                               if(confirm(language === 'ar' ? 'هل أنت متأكد؟' : 'Are you sure?')) {
+                                 try {
+                                   const { error } = await supabase.from('analyses').delete().eq('id', report.id);
+                                   if (error) throw error;
+                                   fetchData();
+                                 } catch (err: any) {
+                                   alert(err.message);
+                                 }
+                               }
+                            }} className="w-11 h-11 flex items-center justify-center bg-[#121E3D] text-red-500 border border-[#1C2E5A] rounded-xl hover:border-red-500/30 transition-all"><Trash2 size={18} /></button>
+                          </div>
+                        </div>
+                      </motion.div>
+                    ))}
+                    {reports.length === 0 && (
+                      <div className="col-span-full text-center py-20 bg-[#0A1128] rounded-[2.5rem] border border-[#1C2E5A] border-dashed">
+                        <FileBarChart className="mx-auto text-gray-700 mb-4" size={48} />
+                        <p className="text-gray-500 uppercase tracking-[0.3em] font-black text-xs">{language === 'ar' ? 'لا توجد تقارير حالياً' : 'No reports available'}</p>
+                      </div>
+                    )}
                   </div>
                 </div>
               )}
@@ -972,35 +1357,43 @@ export const Admin = () => {
                         <MessageSquare className="text-[#D4AF37]" size={24} />
                       </div>
                       <div>
-                        <h3 className="text-xl font-black text-white uppercase tracking-tight">{t('userInquiries')}</h3>
-                        <p className="text-[10px] text-gray-500 font-bold uppercase tracking-widest mt-1">{t('manageCustomerMessages' as any)}</p>
+                        <h3 className="text-xl font-black text-white uppercase tracking-tight">{language === 'ar' ? 'رسائل المستخدمين' : 'User Messages'}</h3>
+                        <p className="text-[10px] text-gray-500 font-bold uppercase tracking-widest mt-1">
+                          {language === 'ar' ? 'إدارة الرسائل والشكاوى الواردة' : 'Manage received inquiries'}
+                        </p>
                       </div>
                     </div>
                   </div>
 
                   <div className="grid grid-cols-1 gap-6">
-                    {messages.map(msg => (
+                    {messages.length === 0 ? (
+                       <div className="text-center py-20 bg-[#0A1128] rounded-[2.5rem] border border-[#1C2E5A] border-dashed">
+                        <MessageSquare className="mx-auto text-gray-700 mb-4" size={48} />
+                        <p className="text-gray-500 uppercase tracking-[0.3em] font-black text-xs">{language === 'ar' ? 'لا توجد رسائل حالياً' : 'No messages found'}</p>
+                      </div>
+                    ) : messages.map(msg => (
                       <motion.div 
                         initial={{ opacity: 0, y: 15 }}
                         animate={{ opacity: 1, y: 0 }}
                         key={msg.id} 
-                        className={`bg-[#0A1128] p-8 rounded-[2rem] border transition-all shadow-2xl relative overflow-hidden group ${msg.read ? 'border-[#1C2E5A]' : 'border-[#D4AF37]/50 ring-1 ring-[#D4AF37]/20'}`}
+                        className={`bg-[#0A1128] p-8 rounded-[2rem] border transition-all shadow-2xl relative overflow-hidden group ${msg.read ? 'border-[#1C2E5A]' : 'border-[#D4AF37]/50 ring-1 ring-[#D4AF37]/20 shadow-[#D4AF37]/5'}`}
                       >
-                        {!msg.read && <div className="absolute top-0 right-0 w-24 h-24 bg-[#D4AF37]/5 rounded-bl-[100%] pointer-events-none"></div>}
-                        
                         <div className="flex justify-between items-start mb-6">
                           <div className="flex items-center gap-4">
-                            <div className="w-12 h-12 bg-[#121E3D] rounded-2xl flex items-center justify-center border border-[#1C2E5A] group-hover:border-[#D4AF37]/30 transition-all">
-                              <User className="text-gray-400 group-hover:text-[#D4AF37]" size={20} />
+                            <div className="w-12 h-12 bg-[#121E3D] rounded-2xl flex items-center justify-center border border-[#1C2E5A] group-hover:border-[#D4AF37]/30 transition-all font-black text-[#D4AF37]">
+                              {msg.name?.[0]?.toUpperCase() || 'U'}
                             </div>
                             <div>
-                              <h4 className="text-white font-black text-lg tracking-tight uppercase">{msg.name}</h4>
+                              <h4 className="text-white font-black text-lg tracking-tight uppercase flex items-center gap-2">
+                                {msg.name}
+                                {!msg.read && <span className="w-2 h-2 rounded-full bg-[#D4AF37] animate-pulse"></span>}
+                              </h4>
                               <p className="text-[10px] text-gray-600 font-black tracking-widest uppercase mt-0.5">{msg.email}</p>
                             </div>
                           </div>
                           <div className="text-right">
                             <span className="text-[10px] text-gray-500 font-black uppercase tracking-widest block mb-1">
-                              {msg.createdAt?.toDate().toLocaleDateString()}
+                              {new Date(msg.created_at).toLocaleDateString()}
                             </span>
                             <span className="text-[9px] text-[#D4AF37] font-black uppercase tracking-widest px-2 py-1 bg-[#D4AF37]/5 rounded border border-[#D4AF37]/10">
                               {msg.subject}
@@ -1015,28 +1408,42 @@ export const Admin = () => {
                         
                         <div className="flex justify-end gap-3 mt-6">
                           {!msg.read && (
-                            <button onClick={async () => await updateDoc(doc(db, 'messages', msg.id), { read: true })} className="px-5 py-2.5 bg-[#D4AF37] text-[#0A1128] text-[10px] uppercase font-black tracking-widest rounded-xl hover:bg-[#E5C158] transition-all shadow-lg shadow-[#D4AF37]/10">{t('markAsRead')}</button>
+                            <button onClick={async () => { 
+                              await supabase.from('messages').update({ read: true }).eq('id', msg.id); 
+                              fetchData();
+                            }} className="px-6 py-3 bg-[#D4AF37] text-[#0A1128] text-[10px] uppercase font-black tracking-widest rounded-xl hover:bg-[#E5C158] transition-all shadow-lg shadow-[#D4AF37]/10">
+                              {language === 'ar' ? 'تحديد كمقروء' : 'Mark as Read'}
+                            </button>
                           )}
-                          <button onClick={async () => { if(confirm(t('areYouSure'))) await deleteDoc(doc(db, 'messages', msg.id)); }} className="px-5 py-2.5 bg-red-500/10 text-red-500 border border-red-500/20 text-[10px] uppercase font-black tracking-widest rounded-xl hover:bg-red-500/20 transition-all">{t('delete')}</button>
+                          <button onClick={async () => { 
+                             if(confirm(language === 'ar' ? 'هل أنت متأكد؟' : 'Are you sure?')) { 
+                               await supabase.from('messages').delete().eq('id', msg.id); 
+                               fetchData();
+                             } 
+                          }} className="px-6 py-3 bg-red-500/10 text-red-500 border border-red-500/20 text-[10px] uppercase font-black tracking-widest rounded-xl hover:bg-red-500/20 transition-all">
+                            {language === 'ar' ? 'حذف' : 'Delete'}
+                          </button>
                         </div>
                       </motion.div>
                     ))}
-                    {messages.length === 0 && (
-                      <div className="text-center py-20 bg-[#0A1128] rounded-[2.5rem] border border-[#1C2E5A] border-dashed">
-                        <MessageSquare className="mx-auto text-gray-700 mb-4" size={48} />
-                        <p className="text-gray-500 uppercase tracking-[0.3em] font-black text-xs">{t('noMessages' as any)}</p>
-                      </div>
-                    )}
                   </div>
                 </div>
               )}
               {activeTab === 'import_csv' && (
                 <div className="bg-[#0A1128] p-10 rounded-3xl border border-[#1C2E5A] shadow-2xl relative overflow-hidden">
                    <div className="absolute top-0 left-0 w-full h-1 bg-gradient-to-r from-transparent via-[#D4AF37]/50 to-transparent"></div>
-                   <h3 className="text-2xl font-black mb-10 flex items-center gap-4 text-white uppercase tracking-tighter">
-                    <FileSpreadsheet className="text-[#D4AF37]" size={28} />
-                    {language === 'ar' ? 'استيراد السلع والأسعار عبر ملف إكسل' : 'Import Commodities via Excel'}
-                  </h3>
+                    <h3 className="text-2xl font-black mb-10 flex items-center justify-between text-white uppercase tracking-tighter">
+                      <div className="flex items-center gap-4">
+                        <FileSpreadsheet className="text-[#D4AF37]" size={28} />
+                        {language === 'ar' ? 'استيراد السلع والأسعار عبر ملف إكسل' : 'Import Commodities via Excel'}
+                      </div>
+                      <button 
+                        onClick={downloadCSVTemplate}
+                        className="flex items-center gap-2 bg-[#1C2E5A] text-white px-4 py-2 rounded-lg font-bold text-[10px] uppercase tracking-widest hover:bg-[#25396D] transition-all"
+                      >
+                        <Download size={14} /> {language === 'ar' ? 'تحميل القالب' : 'Download Template'}
+                      </button>
+                    </h3>
 
                   <div className="max-w-2xl mx-auto space-y-8">
                     {!importConfig.file ? (
@@ -1048,7 +1455,7 @@ export const Admin = () => {
                            {language === 'ar' ? 'قم برفع ملف Excel أو CSV' : 'Upload Excel or CSV file'}
                         </h4>
                         <p className="text-gray-500 font-bold text-sm mb-8">
-                          {language === 'ar' ? 'يجب أن يحتوي الملف على الأعمدة (مطلوب: nameEn, price, symbol | اختياري: nameAr, sectorAr, sectorEn, currency, isVisible)' : 'File should contain columns (required: nameEn, price, symbol | optional: nameAr, sectorAr, sectorEn, currency, isVisible)'}
+                          {language === 'ar' ? 'يجب أن يحتوي الملف على الأعمدة (مطلوب: symbol, name_ar, sector, price)' : 'File should contain columns (required: symbol, name_ar, sector, price)'}
                         </p>
                         <input id="csv-upload" type="file" accept=".xlsx, .xls, .csv" className="hidden" onChange={(e) => {
                           const file = e.target.files?.[0];
@@ -1077,47 +1484,25 @@ export const Admin = () => {
                         </div>
                         
                         <p className="text-gray-400 text-sm mb-6">
-                          {language === 'ar' ? 'حدد الإعدادات الافتراضية التي سيتم تطبيقها على السلع في حال كانت غير محددة في ملف الإكسل.' : 'Select default settings to be applied if missing in the Excel file.'}
+                          {language === 'ar' 
+                            ? 'يرجى التأكد من أن ملف الإكسل يحتوي على الأعمدة المطلوبة. سيتم التحقق من الرموز والقطاعات قبل الحفظ.' 
+                            : 'Please ensure your Excel file contains the required columns. Symbols and sectors will be validated before saving.'}
                         </p>
-                        <div className="space-y-4 text-right">
-                          <div className="space-y-2">
-                            <label className="text-[10px] font-black text-gray-500 uppercase tracking-widest">{language === 'ar' ? 'القطاع (الافتراضي AR)' : 'Sector (Default AR)'}</label>
-                            <select 
-                              className="w-full bg-[#121E3D] border border-[#1C2E5A] rounded-2xl p-4 text-white focus:border-[#D4AF37] outline-none hover:bg-[#1C2E5A] transition-all font-bold appearance-none"
-                              value={importConfig.sectorAr}
-                              onChange={e => setImportConfig({...importConfig, sectorAr: e.target.value})}
-                            >
-                              <option value="">{language === 'ar' ? '-- اختر القطاع --' : '-- Select Sector --'}</option>
-                              {sectors.map((s: any) => (
-                                <option key={s.id} value={s.nameAr}>{s.nameAr}</option>
-                              ))}
-                            </select>
-                          </div>
-                          <div className="space-y-2">
-                            <label className="text-[10px] font-black text-gray-500 uppercase tracking-widest">{language === 'ar' ? 'القطاع (الافتراضي EN)' : 'Sector (Default EN)'}</label>
-                            <select 
-                              className="w-full bg-[#121E3D] border border-[#1C2E5A] rounded-2xl p-4 text-white focus:border-[#D4AF37] outline-none hover:bg-[#1C2E5A] transition-all font-bold appearance-none"
-                              value={importConfig.sectorEn}
-                              onChange={e => setImportConfig({...importConfig, sectorEn: e.target.value})}
-                            >
-                              <option value="">{language === 'ar' ? '-- اختر القطاع --' : '-- Select Sector --'}</option>
-                              {sectors.map((s: any) => (
-                                <option key={s.id} value={s.nameEn}>{s.nameEn}</option>
-                              ))}
-                            </select>
-                          </div>
-                          <div className="space-y-2">
-                            <label className="text-[10px] font-black text-gray-500 uppercase tracking-widest">{language === 'ar' ? 'العملة (الافتراضية)' : 'Currency (Default)'}</label>
-                            <select 
-                              className="w-full bg-[#121E3D] border border-[#1C2E5A] rounded-2xl p-4 text-white focus:border-[#D4AF37] outline-none hover:bg-[#1C2E5A] transition-all font-bold appearance-none"
-                              value={importConfig.currency}
-                              onChange={e => setImportConfig({...importConfig, currency: e.target.value})}
-                            >
-                               <option value="USD">USD - دولار</option>
-                               <option value="EUR">EUR - يورو</option>
-                               <option value="LYD">LYD - دينار ليبي</option>
-                            </select>
-                          </div>
+                        
+                        <div className="bg-[#0A1128] p-6 rounded-2xl border border-[#1C2E5A] space-y-4">
+                           <div className="flex items-center justify-between text-xs font-bold uppercase tracking-widest text-gray-500">
+                             <span>{language === 'ar' ? 'الأعمدة المطلوبة' : 'Required Columns'}</span>
+                             <span className="text-[#D4AF37]">symbol, name_ar, sector, price</span>
+                           </div>
+                           <div className="flex items-center justify-between text-xs font-bold uppercase tracking-widest text-gray-500">
+                             <span>{language === 'ar' ? 'أعمدة اختيارية' : 'Optional Columns'}</span>
+                             <span className="text-blue-400">previous_price, high, low, unit, source, status, is_visible</span>
+                           </div>
+                           <div className="p-4 bg-[#121E3D] rounded-xl text-[10px] text-gray-400 border border-[#1C2E5A] border-dashed">
+                             {language === 'ar' 
+                               ? '* ملاحظة: يجب أن يتطابق حقل sector مع كود القطاع (Sector Code) الموجود في المشرفة.' 
+                               : '* Note: the sector field must match the Sector Code defined in the platform.'}
+                           </div>
                         </div>
 
                         <button 
@@ -1125,6 +1510,61 @@ export const Admin = () => {
                           className="w-full bg-[#D4AF37] text-[#0A1128] font-black uppercase tracking-widest py-4 rounded-xl hover:bg-[#E5C158] transition-all mt-8 shadow-xl shadow-[#D4AF37]/10"
                         >
                           {language === 'ar' ? 'تأكيد واستيراد' : 'Confirm & Import'}
+                        </button>
+                      </div>
+                    )}
+
+                    {importFeedback && (
+                      <div className={`p-8 rounded-3xl border ${importFeedback.errors.length > 0 ? 'bg-red-500/5 border-red-500/20' : 'bg-green-500/5 border-green-500/20'}`}>
+                        <div className="flex items-center gap-4 mb-6 pb-6 border-b border-white/5">
+                           <div className={`w-12 h-12 rounded-2xl flex items-center justify-center ${importFeedback.errors.length > 0 ? 'bg-red-500/20 text-red-500' : 'bg-green-500/20 text-green-500'}`}>
+                             {importFeedback.errors.length > 0 ? <AlertTriangle size={24} /> : <Zap size={24} />}
+                           </div>
+                           <div>
+                             <h4 className="font-black text-white uppercase tracking-tight">{language === 'ar' ? 'نتيجة الاستيراد' : 'Import Result'}</h4>
+                             <p className={`text-sm font-bold ${importFeedback.errors.length > 0 ? 'text-red-400' : 'text-green-400'}`}>{importFeedback.message}</p>
+                           </div>
+                        </div>
+
+                        {importFeedback.errors.length > 0 && (
+                          <div className="overflow-x-auto">
+                            <table className="w-full text-right" dir={language === 'ar' ? 'rtl' : 'ltr'}>
+                              <thead>
+                                <tr className="text-[10px] uppercase tracking-widest text-gray-500 font-black">
+                                  <th className="py-2 px-4">{language === 'ar' ? 'رقم الصف' : 'Row'}</th>
+                                  <th className="py-2 px-4">{language === 'ar' ? 'الرمز' : 'Symbol'}</th>
+                                  <th className="py-2 px-4">{language === 'ar' ? 'السبب' : 'Reason'}</th>
+                                </tr>
+                              </thead>
+                              <tbody className="divide-y divide-white/5">
+                                {importFeedback.errors.map((error, idx) => {
+                                  // Map string errors back to table rows if they follow the format "Row X (SYM): Reason"
+                                  const rowMatch = error.match(/Row (\d+) \((.*?)\): (.*)/);
+                                  if (rowMatch) {
+                                    return (
+                                      <tr key={idx} className="text-xs text-gray-400">
+                                        <td className="py-3 px-4 font-mono">{rowMatch[1]}</td>
+                                        <td className="py-3 px-4 font-bold text-white">{rowMatch[2]}</td>
+                                        <td className="py-3 px-4 text-red-400">{rowMatch[3]}</td>
+                                      </tr>
+                                    );
+                                  }
+                                  return (
+                                    <tr key={idx} className="text-xs text-red-400">
+                                      <td colSpan={3} className="py-3 px-4">{error}</td>
+                                    </tr>
+                                  );
+                                })}
+                              </tbody>
+                            </table>
+                          </div>
+                        )}
+                        
+                        <button 
+                          onClick={() => setImportFeedback(null)}
+                          className="mt-8 text-[10px] font-black uppercase tracking-[0.3em] text-gray-500 hover:text-white transition-all flex items-center gap-2"
+                        >
+                          {language === 'ar' ? 'إغلاق التقرير' : 'Close Report'}
                         </button>
                       </div>
                     )}
@@ -1236,9 +1676,23 @@ export const Admin = () => {
 
                       <button 
                         onClick={async () => {
-                          await setDoc(doc(db, 'settings', 'global'), siteSettings);
+                          const keys = ['facebook_url', 'twitter_url', 'linkedin_url', 'contact_email', 'contact_phone', 'platform_name'];
+                          const values = [
+                            siteSettings.facebookUrl, 
+                            siteSettings.twitterUrl, 
+                            siteSettings.linkedinUrl,
+                            siteSettings.contactEmail,
+                            siteSettings.contactPhone,
+                            siteSettings.platformName
+                          ];
+                          
+                          for (let i = 0; i < keys.length; i++) {
+                            await supabase.from('platform_settings').upsert({ key: keys[i], value: values[i] }, { onConflict: 'key' });
+                          }
+                          
                           alert(t('settingsSaved'));
                           logUserActivity('تحديث الإعدادات', 'تم تحديث إعدادات المنصة بالكامل');
+                          fetchData();
                         }}
                         className="w-full flex items-center justify-center gap-3 bg-[#D4AF37] text-[#0A1128] font-black py-5 rounded-2xl hover:bg-[#E5C158] transition-all shadow-xl shadow-[#D4AF37]/10 text-sm uppercase tracking-widest"
                       >
@@ -1282,7 +1736,7 @@ export const Admin = () => {
                                 console.error('Error updating platform status in Supabase:', error);
                               }
                               
-                              await setDoc(doc(db, 'settings', 'global'), updatedSettings);
+                              await supabase.from('platform_settings').upsert({ key: 'is_site_active', value: newActive ? 'open' : 'maintenance' }, { onConflict: 'key' });
                               logUserActivity('تحديث حالة المنصة', `تم ${newActive ? 'فتح' : 'إغلاق'} المنصة`);
                             }} className={`transition-transform hover:scale-110 active:scale-95 ${siteSettings.isSiteActive ? 'text-green-500 drop-shadow-[0_0_10px_rgba(34,197,94,0.3)]' : 'text-red-500 drop-shadow-[0_0_10px_rgba(239,68,68,0.3)]'}`}>
                               {siteSettings.isSiteActive ? <ToggleRight size={80}/> : <ToggleLeft size={80}/>}
@@ -1305,8 +1759,15 @@ export const Admin = () => {
                        
                        <button 
                         onClick={async () => {
-                          await setDoc(doc(db, 'settings', 'global'), siteSettings);
+                          const keys = ['maintenance_message_ar', 'maintenance_message_en'];
+                          const values = [siteSettings.maintenanceMessageAr, siteSettings.maintenanceMessageEn];
+                          
+                          for (let i = 0; i < keys.length; i++) {
+                            await supabase.from('platform_settings').upsert({ key: keys[i], value: values[i] }, { onConflict: 'key' });
+                          }
+                          
                           alert(t('settingsSaved'));
+                          fetchData();
                         }}
                         className="w-full bg-red-500 text-white font-black uppercase tracking-widest py-5 rounded-2xl hover:bg-red-600 transition-all shadow-xl shadow-red-500/10 flex items-center justify-center gap-3"
                       >
@@ -1362,10 +1823,10 @@ export const Admin = () => {
                             <tr key={log.id} className="text-xs hover:bg-[#121E3D]/30 transition-colors group">
                               <td className="p-6 whitespace-nowrap">
                                 <div className="text-gray-200 font-black uppercase tracking-tight">
-                                  {log.timestamp?.toDate().toLocaleDateString(language === 'ar' ? 'ar-LY' : 'en-US')}
+                                  {log.timestamp && new Date(log.timestamp).toLocaleDateString(language === 'ar' ? 'ar-LY' : 'en-US')}
                                 </div>
                                 <div className="text-gray-600 text-[9px] font-black uppercase mt-1">
-                                  {log.timestamp?.toDate().toLocaleTimeString(language === 'ar' ? 'ar-LY' : 'en-US')}
+                                  {log.timestamp && new Date(log.timestamp).toLocaleTimeString(language === 'ar' ? 'ar-LY' : 'en-US')}
                                 </div>
                               </td>
                               <td className="p-6">
@@ -1398,6 +1859,8 @@ export const Admin = () => {
               {activeTab === 'dataSources' && <DataSourcesTab />}
               {activeTab === 'exchangeRates' && <ExchangeRatesTab />}
               {activeTab === 'admin_users' && <AdminUsersTab currentUser={user} />}
+              {activeTab === 'platform_users' && (adminUser?.role === 'super_admin' || adminUser?.can_manage_admins || adminUser?.permissions?.includes('admin_users')) && <PlatformUsersTab />}
+              {activeTab === 'platform_settings' && (adminUser?.role === 'super_admin' || adminUser?.can_manage_admins) && <PlatformSettingsTab />}
               {activeTab === 'legal' && <LegalTab />}
               {activeTab === 'backup' && <BackupTab />}
               {activeTab === 'interface' && <InterfaceTab />}
@@ -1535,7 +1998,7 @@ export const Admin = () => {
                              const cv = pp > 0 ? (p - pp) : 0;
                              const cp = pp > 0 ? ((p - pp) / pp) * 100 : 0;
                              const tr = p > pp ? 'up' : (p < pp ? 'down' : 'neutral');
-                             setEditingItem({...editingItem, data: {...editingItem.data, price: p, changeValue: cv, changePercent: cp.toFixed(2), trend: tr}});
+                             setEditingItem({...editingItem, data: {...editingItem.data, price: p, changeValue: cv, changePercent: Number(cp.toFixed(2)), trend: tr}});
                           }} />
                         </div>
                         <div className="space-y-3">
@@ -1546,7 +2009,7 @@ export const Admin = () => {
                              const cv = pp > 0 ? (p - pp) : 0;
                              const cp = pp > 0 ? ((p - pp) / pp) * 100 : 0;
                              const tr = p > pp ? 'up' : (p < pp ? 'down' : 'neutral');
-                             setEditingItem({...editingItem, data: {...editingItem.data, previousPrice: pp, changeValue: cv, changePercent: cp.toFixed(2), trend: tr}});
+                             setEditingItem({...editingItem, data: {...editingItem.data, previousPrice: pp, changeValue: cv, changePercent: Number(cp.toFixed(2)), trend: tr}});
                           }} />
                         </div>
                         <div className="space-y-3">
@@ -1608,20 +2071,32 @@ export const Admin = () => {
                       <div className="space-y-8">
                         <div className="grid grid-cols-1 sm:grid-cols-2 gap-8">
                           <div className="space-y-3">
-                            <label className="text-[10px] font-black text-gray-500 uppercase tracking-[0.2em]">Title (AR)</label>
+                            <label className="text-[10px] font-black text-gray-500 uppercase tracking-[0.2em]">{language === 'ar' ? 'العنوان (عربي)' : 'Title (AR)'}</label>
                             <input className="w-full bg-[#121E3D] border border-[#1C2E5A] rounded-2xl p-5 text-white focus:border-[#D4AF37] outline-none font-black text-lg" value={editingItem.data.titleAr} onChange={(e) => setEditingItem({...editingItem, data: {...editingItem.data, titleAr: e.target.value}})} />
                           </div>
                           <div className="space-y-3">
-                            <label className="text-[10px] font-black text-gray-500 uppercase tracking-[0.2em]">Title (EN)</label>
+                            <label className="text-[10px] font-black text-gray-500 uppercase tracking-[0.2em]">{language === 'ar' ? 'العنوان (إنجليزي)' : 'Title (EN)'}</label>
                             <input className="w-full bg-[#121E3D] border border-[#1C2E5A] rounded-2xl p-5 text-white focus:border-[#D4AF37] outline-none font-black text-lg italic" value={editingItem.data.titleEn} onChange={(e) => setEditingItem({...editingItem, data: {...editingItem.data, titleEn: e.target.value}})} />
+                          </div>
+                          <div className="space-y-3">
+                            <label className="text-[10px] font-black text-gray-500 uppercase tracking-[0.2em]">{language === 'ar' ? 'نوع التحليل' : 'Analysis Type'}</label>
+                            <select className="w-full bg-[#121E3D] border border-[#1C2E5A] rounded-2xl p-5 text-white focus:border-[#D4AF37] outline-none font-black text-sm" value={editingItem.data.analysis_type} onChange={(e) => setEditingItem({...editingItem, data: {...editingItem.data, analysis_type: e.target.value}})}>
+                              <option value="technical">{language === 'ar' ? 'تقني' : 'Technical'}</option>
+                              <option value="fundamental">{language === 'ar' ? 'أساسي' : 'Fundamental'}</option>
+                              <option value="daily">{language === 'ar' ? 'تحليل يومي' : 'Daily'}</option>
+                            </select>
+                          </div>
+                          <div className="space-y-3">
+                            <label className="text-[10px] font-black text-gray-500 uppercase tracking-[0.2em]">{language === 'ar' ? 'الرمز المرتبط' : 'Related Symbol'}</label>
+                            <input className="w-full bg-[#121E3D] border border-[#1C2E5A] rounded-2xl p-5 text-white focus:border-[#D4AF37] outline-none font-black text-sm" value={editingItem.data.related_symbol || ''} onChange={(e) => setEditingItem({...editingItem, data: {...editingItem.data, related_symbol: e.target.value.toUpperCase()}})} placeholder="GOLD, OIL, etc." />
                           </div>
                         </div>
                         <div className="space-y-3">
-                          <label className="text-[10px] font-black text-gray-500 uppercase tracking-[0.2em]">Content (AR)</label>
+                          <label className="text-[10px] font-black text-gray-500 uppercase tracking-[0.2em]">{language === 'ar' ? 'المحتوى (عربي)' : 'Content (AR)'}</label>
                           <textarea className="w-full bg-[#121E3D] border border-[#1C2E5A] rounded-3xl p-6 text-white focus:border-[#D4AF37] outline-none min-h-[250px] font-serif leading-relaxed" value={editingItem.data.contentAr} onChange={(e) => setEditingItem({...editingItem, data: {...editingItem.data, contentAr: e.target.value}})} />
                         </div>
                         <div className="space-y-3">
-                          <label className="text-[10px] font-black text-gray-500 uppercase tracking-[0.2em]">Content (EN)</label>
+                          <label className="text-[10px] font-black text-gray-500 uppercase tracking-[0.2em]">{language === 'ar' ? 'المحتوى (إنجليزي)' : 'Content (EN)'}</label>
                           <textarea className="w-full bg-[#121E3D] border border-[#1C2E5A] rounded-3xl p-6 text-white focus:border-[#D4AF37] outline-none min-h-[250px] font-serif leading-relaxed italic" value={editingItem.data.contentEn} onChange={(e) => setEditingItem({...editingItem, data: {...editingItem.data, contentEn: e.target.value}})} />
                         </div>
                       </div>
@@ -1630,6 +2105,7 @@ export const Admin = () => {
 
                   <div className="flex gap-4 mt-12 bg-[#121E3D]/50 p-6 -mx-10 -mb-10 border-t border-[#1C2E5A]">
                     <button onClick={async () => {
+                      console.log('Save button clicked');
                       const { id, ...data } = editingItem.data;
                       let collectionName = '';
                       if (editingItem.type === 'news') collectionName = 'news_ticker';
@@ -1641,100 +2117,150 @@ export const Admin = () => {
                           alert(language === 'ar' ? 'يجب إدخال الرمز' : 'Symbol is required');
                           return;
                         }
-                        const symbol = String(data.symbol).trim();
-                        if (isNaN(Number(data.price)) || Number(data.price) < 0) {
-                          alert(language === 'ar' ? 'السعر غير صالح' : 'Invalid price');
+                        if (!data.nameAr || String(data.nameAr).trim() === '') {
+                          alert(language === 'ar' ? 'يجب إدخال الاسم العربي' : 'Arabic Name is required');
                           return;
                         }
-                        
-                        // Let logic handle find existing logic.
-                        const existing = commodities.find((c: any) => c.symbol === symbol && c.id !== id);
-                        if (existing && !id) {
-                            // The user requested to update it if it exists. Wait, if it exists and we're adding, we should just update it instead of adding another.
-                            // but actually, we should just upsert below based on symbol or ID.
+                        if (!data.sectorAr && !data.sector) {
+                          alert(language === 'ar' ? 'يجب إدخال القطاع' : 'Sector is required');
+                          return;
                         }
-                        
+
+                        const symbol = String(data.symbol).trim().toUpperCase();
                         const newPrice = Number(data.price) || 0;
-                        const previousPrice = Number(data.previousPrice) || (id ? (commodities.find(c => c.id === id)?.price || newPrice) : newPrice);
+                        
+                        // Default previousPrice, high, low to newPrice if not provided or 0
+                        const previousPrice = Number(data.previousPrice) || newPrice;
+                        const high = Number(data.high) || newPrice;
+                        const low = Number(data.low) || newPrice;
+                        
+                        // Calculations
                         const changeValue = newPrice - previousPrice;
                         const changePercent = previousPrice > 0 ? ((newPrice - previousPrice) / previousPrice) * 100 : 0;
                         let trend = 'neutral';
                         if (newPrice > previousPrice) trend = 'up';
                         else if (newPrice < previousPrice) trend = 'down';
                         
-                        const supabaseData = {
+                        // Find sector code if possible
+                        const sectorData = sectors.find(s => s.nameAr === data.sectorAr);
+                        const sectorVal = sectorData?.code || data.sectorAr || data.sector;
+                        
+                        const supabaseData: any = {
                           symbol: symbol,
                           name_ar: data.nameAr,
-                          name_en: data.nameEn,
-                          sector: data.sectorAr, // Using Arabic sector as main sector column
+                          name_en: data.nameEn || data.nameAr,
+                          sector: sectorVal,
                           price: newPrice,
                           previous_price: previousPrice,
                           change_value: changeValue,
                           change_percent: changePercent,
                           trend: trend,
-                          high: Number(data.high) || newPrice,
-                          low: Number(data.low) || newPrice,
-                          unit: data.unit,
-                          source: data.source,
-                          status: 'active',
+                          high: high,
+                          low: low,
+                          unit: data.unit || '',
+                          source: data.source || 'Manual Entry',
+                          status: data.status || 'active',
                           is_visible: data.isVisible !== false,
                           updated_at: new Date().toISOString()
                         };
 
-                        if (id || existing) {
-                          const updateId = id || existing.id;
-                          const { error } = await supabase.from('commodities').update(supabaseData).eq('id', updateId);
-                          if (error) { console.error(error); alert('Error saving to Supabase'); return; }
-                        } else {
-                          const { error } = await supabase.from('commodities').insert([supabaseData]);
-                          if (error) { console.error(error); alert('Error inserting to Supabase'); return; }
+                        try {
+                          console.log('Commodity payload:', supabaseData);
+                          const { data: savedData, error } = await supabase
+                            .from('commodities')
+                            .upsert(supabaseData, { onConflict: 'symbol' })
+                            .select();
+                          
+                          console.log('Supabase save result:', savedData);
+                          console.log('Supabase save error:', error);
+                          
+                          if (error) throw error;
+                          
+                          alert(language === 'ar' ? 'تم الحفظ بنجاح' : 'Saved successfully');
+                          logUserActivity(id ? 'تعديل' : 'إضافة', `حفظ سلعة: ${data.nameAr} (${symbol})`);
+                          setEditingItem(null);
+                          fetchData();
+                        } catch (err: any) {
+                          console.error('Supabase Error:', err);
+                          alert(language === 'ar' ? `فشلت العملية: ${err.message}` : `Operation failed: ${err.message}`);
                         }
-                        logUserActivity(id ? 'تعديل' : 'إضافة', `تعديل ${editingItem.type}: ${data.nameAr}`);
-                        setEditingItem(null);
                         return;
                       }
 
                       if (editingItem.type === 'news') {
                         const newsData = {
-                          title_ar: data.text_ar,
-                          title_en: data.text_en,
-                          content_ar: data.text_ar,
-                          content_en: data.text_en,
+                          title_ar: data.text_ar || data.title_ar,
+                          title_en: data.text_en || data.title_en,
+                          content_ar: data.content_ar || data.text_ar,
+                          content_en: data.content_en || data.text_en,
                           is_breaking: data.is_breaking || false,
-                          status: data.active ? 'published' : 'hidden',
+                          status: 'published',
                           is_visible: data.active !== false,
                           category: data.category || 'general',
                           updated_at: new Date().toISOString()
                         };
 
-                        if (id) {
-                          const { error } = await supabase.from('news').update({...newsData, updated_at: new Date().toISOString()}).eq('id', id);
-                          if (error) { console.error(error); alert('Error saving to Supabase'); return; }
-                        } else {
-                          const { error } = await supabase.from('news').insert([{...newsData, created_at: new Date().toISOString(), updated_at: new Date().toISOString()}]);
-                          if (error) { console.error(error); alert('Error inserting to Supabase'); return; }
+                        try {
+                          if (id) {
+                            const { error } = await supabase.from('news').update(newsData).eq('id', id);
+                            if (error) throw error;
+                          } else {
+                            const { error } = await supabase.from('news').insert([{...newsData, created_at: new Date().toISOString()}]);
+                            if (error) throw error;
+                          }
+                          alert(language === 'ar' ? 'تم حفظ الخبر بنجاح' : 'News saved successfully');
+                          logUserActivity(id ? 'تعديل' : 'إضافة', `تعديل خبر: ${newsData.title_ar}`);
+                          setEditingItem(null);
+                          fetchData();
+                        } catch (err: any) {
+                           console.error("Supabase Error:", err);
+                           alert(language === 'ar' ? `فشلت العملية: ${err.message}` : `Operation failed: ${err.message}`);
                         }
-                        logUserActivity(id ? 'تعديل' : 'إضافة', `تعديل ${editingItem.type}: ${data.text_ar}`);
-                        setEditingItem(null);
                         return;
                       }
 
-                      if (id) {
-                        try {
-                          await updateDoc(doc(db, collectionName, id), data);
-                          logUserActivity('تعديل', `تعديل ${editingItem.type}: ${data.nameAr || data.text_ar || data.titleAr}`);
-                        } catch (e) {
-                          handleFirestoreError(e, OperationType.UPDATE, collectionName);
-                        }
-                      } else {
-                        try {
-                          await addDoc(collection(db, collectionName), { ...data, createdAt: serverTimestamp() });
-                          logUserActivity('إضافة', `إضافة ${editingItem.type}: ${data.nameAr || data.text_ar || data.titleAr}`);
-                        } catch (e) {
-                          handleFirestoreError(e, OperationType.CREATE, collectionName);
-                        }
-                      }
-                      setEditingItem(null);
+                       if (editingItem.type === 'report' || editingItem.type === 'analysis') {
+                         const reportData: any = {
+                           title_ar: data.titleAr,
+                           title_en: data.titleEn,
+                           content_ar: data.contentAr,
+                           content_en: data.contentEn,
+                           analysis_type: data.analysis_type || 'technical',
+                           sector: data.sector || 'ENERGY',
+                           related_symbol: data.related_symbol || '',
+                           is_visible: data.is_visible !== false,
+                           status: data.status || 'published',
+                           updated_at: new Date().toISOString()
+                         };
+                         
+                         try {
+                           if (id) {
+                             const { error } = await supabase.from('analyses').update(reportData).eq('id', id);
+                             if (error) throw error;
+                           } else {
+                             const { error } = await supabase.from('analyses').insert([{...reportData, created_at: new Date().toISOString()}]);
+                             if (error) throw error;
+                           }
+                           alert(language === 'ar' ? 'تم حفظ التحليل بنجاح' : 'Analysis saved successfully');
+                           logUserActivity(id ? 'تعديل' : 'إضافة', `تعديل تحليل: ${data.titleAr}`);
+                           setEditingItem(null);
+                           fetchData();
+                         } catch (err: any) {
+                           console.error("Supabase Error:", err);
+                           alert(language === 'ar' ? `فشلت العملية: ${err.message}` : `Operation failed: ${err.message}`);
+                         }
+                         return;
+                       }
+
+                       if (id) {
+                         const { error } = await supabase.from(collectionName).update(data).eq('id', id);
+                         if (error) { console.error(error); alert('Error saving to Supabase'); return; }
+                       } else {
+                         const { error } = await supabase.from(collectionName).insert([data]);
+                         if (error) { console.error(error); alert('Error inserting to Supabase'); return; }
+                       }
+                       setEditingItem(null);
+                       fetchData();
                     }} className="flex-1 bg-[#D4AF37] text-[#0A1128] font-black py-5 rounded-2xl hover:bg-[#E5C158] transition-all shadow-xl shadow-[#D4AF37]/10 uppercase tracking-widest text-xs">{t('saveChanges')}</button>
                     <button onClick={() => setEditingItem(null)} className="flex-1 bg-[#1C2E5A] text-white font-black py-5 rounded-2xl hover:bg-[#25396D] transition-all uppercase tracking-widest text-xs border border-[#2A4075]">{t('cancel')}</button>
                   </div>

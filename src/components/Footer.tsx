@@ -13,19 +13,19 @@ export const Footer = () => {
     disclaimer: {
       titleAr: 'إخلاء المسؤولية',
       titleEn: 'Disclaimer',
-      contentAr: 'البيانات والأسعار المنشورة في منصة الأسعار العالمية مخصصة لأغراض المتابعة والتحليل فقط، ولا تُعد توصية استثمارية أو تجارية. قد تختلف الأسعار حسب المصدر ووقت التحديث، ولا تتحمل المنصة أي مسؤولية عن القرارات المتخذة بناءً على هذه البيانات.',
+      contentAr: settings.disclaimerAr || 'البيانات والأسعار المنشورة في منصة الأسعار العالمية مخصصة لأغراض المتابعة والتحليل فقط، ولا تُعد توصية استثمارية أو تجارية. قد تختلف الأسعار حسب المصدر ووقت التحديث، ولا تتحمل المنصة أي مسؤولية عن القرارات المتخذة بناءً على هذه البيانات.',
       contentEn: 'The data and prices published on the Global Prices Platform are for monitoring and analysis purposes only and do not constitute investment or commercial advice. Prices may vary by source and time of update, and the platform bears no responsibility for decisions made based on this data.'
     },
     terms: {
       titleAr: 'شروط الاستخدام',
       titleEn: 'Terms of Use',
-      contentAr: 'باستخدامك للمنصة، فإنك توافق على استخدام البيانات بطريقة قانونية ومسؤولة، وعدم نسخ أو إعادة نشر المحتوى أو استغلاله تجاريًا دون إذن مسبق من إدارة المنصة.',
+      contentAr: settings.termsAr || 'باستخدامك للمنصة، فإنك توافق على استخدام البيانات بطريقة قانونية ومسؤولة، وعدم نسخ أو إعادة نشر المحتوى أو استغلاله تجاريًا دون إذن مسبق من إدارة المنصة.',
       contentEn: 'By using the platform, you agree to use the data in a legal and responsible manner, and not to copy, republish, or commercially exploit the content without prior permission from the platform administration.'
     },
     privacy: {
       titleAr: 'سياسة الخصوصية',
       titleEn: 'Privacy Policy',
-      contentAr: 'تحترم المنصة خصوصية المستخدمين، ولا تقوم ببيع بياناتهم الشخصية. تُستخدم البيانات فقط لأغراض تشغيل الحسابات، تحسين الخدمات، الحماية، والتحقق من الهوية عند الحاجة.',
+      contentAr: settings.privacyPolicyAr || 'تحترم المنصة خصوصية المستخدمين، ولا تقوم ببيع بياناتهم الشخصية. تُستخدم البيانات فقط لأغراض تشغيل الحسابات، تحسين الخدمات، الحماية، والتحقق من الهوية عند الحاجة.',
       contentEn: 'The platform respects user privacy and does not sell their personal data. Data is used only for operating accounts, improving services, protection, and identity verification when necessary.'
     }
   };
@@ -53,17 +53,17 @@ export const Footer = () => {
               {language === 'ar' ? settings.descriptionAr : settings.descriptionEn}
             </p>
             <div className="flex items-center gap-4">
-              {settings.twitterUrl && (
+              {settings.twitterUrl && settings.twitterUrl !== '#' && (
                 <a href={settings.twitterUrl} className="w-10 h-10 rounded-full bg-[#121E3D] border border-[#1C2E5A] flex items-center justify-center text-gray-400 hover:text-[#D4AF37] hover:border-[#D4AF37] transition-all">
-                  <Twitter size={18} />
+                  <X size={18} />
                 </a>
               )}
-              {settings.linkedinUrl && (
+              {settings.linkedinUrl && settings.linkedinUrl !== '#' && (
                 <a href={settings.linkedinUrl} className="w-10 h-10 rounded-full bg-[#121E3D] border border-[#1C2E5A] flex items-center justify-center text-gray-400 hover:text-[#D4AF37] hover:border-[#D4AF37] transition-all">
                   <Linkedin size={18} />
                 </a>
               )}
-              {settings.facebookUrl && (
+              {settings.facebookUrl && settings.facebookUrl !== '#' && (
                 <a href={settings.facebookUrl} className="w-10 h-10 rounded-full bg-[#121E3D] border border-[#1C2E5A] flex items-center justify-center text-gray-400 hover:text-[#D4AF37] hover:border-[#D4AF37] transition-all">
                   <Facebook size={18} />
                 </a>
@@ -120,7 +120,10 @@ export const Footer = () => {
         {/* Copyright */}
         <div className="border-t border-[#1C2E5A] pt-8 flex flex-col md:flex-row items-center justify-between gap-4">
           <p className="text-gray-500 text-sm">
-            &copy; {new Date().getFullYear()} {language === 'ar' ? settings.siteNameAr : settings.siteNameEn}. {t('rights')}
+            {language === 'ar' 
+              ? (settings.footerTextAr || `© ${new Date().getFullYear()} ${settings.siteNameAr}. ${t('rights')}`)
+              : (settings.footerTextEn || `© ${new Date().getFullYear()} ${settings.siteNameEn}. ${t('rights')}`)
+            }
           </p>
           <div className="flex items-center gap-6">
             <button onClick={() => setActiveModal('terms')} className="text-gray-500 hover:text-white text-sm transition-colors">{t('terms')}</button>

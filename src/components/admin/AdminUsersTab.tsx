@@ -40,20 +40,33 @@ export const AdminUsersTab = ({ currentUser }: { currentUser: any }) => {
   const handleSave = async () => {
     if (!formData.email) return;
     
-    if (editingId && editingId !== 'new') {
-      await supabase.from('admin_users').update(formData).eq('id', editingId);
-    } else {
-      await supabase.from('admin_users').insert([formData]);
+    try {
+      if (editingId && editingId !== 'new') {
+        const { error } = await supabase.from('admin_users').update(formData).eq('id', editingId);
+        if (error) throw error;
+        alert(language === 'ar' ? 'تم تحديث البيانات بنجاح' : 'Admin updated successfully');
+      } else {
+        const { error } = await supabase.from('admin_users').insert([formData]);
+        if (error) throw error;
+        alert(language === 'ar' ? 'تم إضافة المشرف بنجاح' : 'Admin added successfully');
+      }
+      setEditingId(null);
+      setFormData({ email: '', role: 'editor', permissions: [], is_active: true });
+      fetchUsers();
+    } catch (err: any) {
+      alert(err.message);
     }
-    setEditingId(null);
-    setFormData({ email: '', role: 'editor', permissions: [], is_active: true });
-    fetchUsers();
   };
 
   const handleDelete = async (id: string) => {
-    if (confirm('هل أنت متأكد من الحذف؟')) {
-      await supabase.from('admin_users').delete().eq('id', id);
-      fetchUsers();
+    if (confirm(language === 'ar' ? 'هل أنت متأكد من الحذف؟' : 'Are you sure you want to delete?')) {
+      try {
+        const { error } = await supabase.from('admin_users').delete().eq('id', id);
+        if (error) throw error;
+        fetchUsers();
+      } catch (err: any) {
+        alert(err.message);
+      }
     }
   };
 
@@ -69,7 +82,7 @@ export const AdminUsersTab = ({ currentUser }: { currentUser: any }) => {
               {language === 'ar' ? 'إدارة المشرفين (الأدمن)' : 'Admin Management'}
             </h2>
             <p className="text-gray-500 text-xs font-bold mt-1">
-              {language === 'ar' ? 'إضافة صلاحيات للموظفين' : 'Manage staff permissions'}
+              {language === 'ar' ? 'إضافة صلاحيات للموظفين (يجب تسجيلهم في Supabase Auth أولاً)' : 'Manage staff permissions (Users must be registered in Supabase Auth first)'}
             </p>
           </div>
         </div>
