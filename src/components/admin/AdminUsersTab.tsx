@@ -20,6 +20,7 @@ export const AdminUsersTab = ({ currentUser }: { currentUser: any }) => {
 
   const availablePermissions = [
     { id: 'commodities', labelAr: 'إدارة الأسعار', labelEn: 'Manage Commodities' },
+    { id: 'manage_prices', labelAr: 'أرشيف الأسعار', labelEn: 'Price Archive' },
     { id: 'news', labelAr: 'إدارة الأخبار', labelEn: 'Manage News' },
     { id: 'analyses', labelAr: 'إدارة التحليلات', labelEn: 'Manage Analyses' },
     { id: 'sectors', labelAr: 'إدارة القطاعات', labelEn: 'Manage Sectors' },

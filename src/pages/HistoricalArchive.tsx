@@ -1,0 +1,278 @@
+import React, { useState, useEffect } from 'react';
+import { motion } from 'motion/react';
+import { History, Search, Activity, Calendar, Download, TrendingUp } from 'lucide-react';
+import { supabase } from '../lib/supabase';
+import { useLanguage } from '../context/LanguageContext';
+import { useMarketData } from '../context/MarketContext';
+import { AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts';
+import { PriceDisplay } from '../components/PriceDisplay';
+
+export const HistoricalArchive = () => {
+  const { t, language } = useLanguage();
+  const { history: historyData, fetchHistory, loading: marketLoading } = useMarketData();
+  const [commodities, setCommodities] = useState<any[]>([]);
+  const [selectedCommodityId, setSelectedCommodityId] = useState<string>('');
+  
+  const [formattedHistory, setFormattedHistory] = useState<any[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [period, setPeriod] = useState<number | 'all'>(7); 
+
+  const [stats, setStats] = useState({
+    firstPrice: 0,
+    lastPrice: 0,
+    highPrice: 0,
+    lowPrice: 0,
+    firstDate: '',
+    lastDate: ''
+  });
+
+  useEffect(() => {
+    const fetchCommodities = async () => {
+      const { data } = await supabase.from('commodities').select('id, symbol, name_ar, name_en, currency').order('name_ar');
+      if (data) {
+        setCommodities(data);
+        if (data.length > 0) {
+          setSelectedCommodityId(data[0].id);
+        }
+      }
+    };
+    fetchCommodities();
+  }, []);
+
+  useEffect(() => {
+    if (selectedCommodityId && commodities.length > 0) {
+      const comm = commodities.find(c => c.id === selectedCommodityId);
+      if (comm) {
+        fetchHistory(comm.symbol);
+      }
+    }
+  }, [selectedCommodityId, commodities]);
+
+  useEffect(() => {
+    if (historyData) {
+      let filtered = [...historyData];
+      if (period !== 'all') {
+        const date = new Date();
+        date.setDate(date.getDate() - (period as number));
+        filtered = filtered.filter(item => new Date(item.recorded_at) >= date);
+      }
+
+      if (filtered.length > 0) {
+        const formatted = filtered.map(item => ({
+          ...item,
+          time: new Date(item.recorded_at).toLocaleDateString(language === 'ar' ? 'ar-LY' : 'en-US', {
+            month: 'short',
+            day: 'numeric'
+          })
+        }));
+        setFormattedHistory(formatted);
+
+        const prices = filtered.map(d => d.price);
+        setStats({
+          firstPrice: filtered[0].price,
+          lastPrice: filtered[filtered.length - 1].price,
+          highPrice: Math.max(...prices),
+          lowPrice: Math.min(...prices),
+          firstDate: filtered[0].recorded_at,
+          lastDate: filtered[filtered.length - 1].recorded_at
+        });
+      } else {
+        setFormattedHistory([]);
+      }
+    }
+  }, [historyData, period, language]);
+
+  useEffect(() => {
+    setLoading(marketLoading);
+  }, [marketLoading]);
+
+  const periods = [
+    { label: language === 'ar' ? 'آخر 7 أيام' : 'Last 7 Days', value: 7 },
+    { label: language === 'ar' ? 'آخر 30 يومًا' : 'Last 30 Days', value: 30 },
+    { label: language === 'ar' ? 'آخر 3 أشهر' : 'Last 3 Months', value: 90 },
+    { label: language === 'ar' ? 'آخر 6 أشهر' : 'Last 6 Months', value: 180 },
+    { label: language === 'ar' ? 'سنة' : '1 Year', value: 365 },
+    { label: language === 'ar' ? 'الكل' : 'All', value: 'all' }
+  ];
+
+  const selectedComm = commodities.find(c => c.id === selectedCommodityId);
+  const changeVal = stats.lastPrice - stats.firstPrice;
+  const changePct = stats.firstPrice > 0 ? (changeVal / stats.firstPrice) * 100 : 0;
+  const isUp = changeVal >= 0;
+
+  return (
+    <div className="min-h-screen bg-[#0A1128] pt-24 pb-12">
+      <div className="container mx-auto px-4">
+        
+        {/* Header */}
+        <div className="flex items-center gap-4 mb-10 border-b border-[#1C2E5A] pb-6">
+          <div className="w-16 h-16 bg-[#D4AF37]/10 rounded-2xl flex items-center justify-center border border-[#D4AF37]/20">
+            <History className="text-[#D4AF37]" size={32} />
+          </div>
+          <div>
+            <h1 className="text-3xl md:text-4xl font-black text-white uppercase tracking-tighter">
+              {language === 'ar' ? 'الأرشيف التاريخي للأسعار' : 'Historical Prices Archive'}
+            </h1>
+            <p className="text-gray-400 mt-2">
+              {language === 'ar' ? 'استعرض مسار وتطور الأسعار عبر الزمن ببيانات دقيقة' : 'Explore the trajectory of prices over time with precise data'}
+            </p>
+          </div>
+        </div>
+
+        <div className="flex flex-col lg:flex-row gap-8">
+          {/* Sidebar / Controls */}
+          <div className="lg:w-1/3 space-y-6">
+            <div className="bg-[#121E3D] border border-[#1C2E5A] rounded-2xl p-6 shadow-xl">
+              <h3 className="text-lg font-bold text-white mb-4 flex items-center gap-2">
+                <Search size={20} className="text-[#D4AF37]" />
+                {language === 'ar' ? 'اختيار السلعة' : 'Select Commodity'}
+              </h3>
+              
+              <div className="relative">
+                <select 
+                  value={selectedCommodityId}
+                  onChange={(e) => setSelectedCommodityId(e.target.value)}
+                  className="w-full bg-[#0A1128] border border-[#1C2E5A] rounded-xl py-4 px-4 text-white focus:border-[#D4AF37] outline-none appearance-none"
+                >
+                  <option value="" disabled>{language === 'ar' ? 'اختر سلعة...' : 'Select commodity...'}</option>
+                  {commodities.map((c) => (
+                    <option key={c.id} value={c.id}>
+                      {c.symbol} - {language === 'ar' ? c.name_ar : c.name_en}
+                    </option>
+                  ))}
+                </select>
+                <div className={`absolute ${language === 'ar' ? 'left-4' : 'right-4'} top-1/2 -translate-y-1/2 pointer-events-none text-gray-500`}>
+                  ▼
+                </div>
+              </div>
+            </div>
+
+            <div className="bg-[#121E3D] border border-[#1C2E5A] rounded-2xl p-6 shadow-xl">
+              <h3 className="text-lg font-bold text-white mb-4 flex items-center gap-2">
+                <Calendar size={20} className="text-[#D4AF37]" />
+                {language === 'ar' ? 'الفترة الزمنية' : 'Time Period'}
+              </h3>
+              
+              <div className="grid grid-cols-2 gap-2">
+                {periods.map(p => (
+                  <button
+                    key={p.value}
+                    onClick={() => setPeriod(p.value as any)}
+                    className={`px-4 py-3 rounded-lg text-sm font-bold transition-colors ${period === p.value ? 'bg-[#D4AF37] text-[#0A1128]' : 'bg-[#0A1128] text-gray-400 hover:text-white border border-[#1C2E5A]'}`}
+                  >
+                    {p.label}
+                  </button>
+                ))}
+              </div>
+            </div>
+            
+            {/* Realtime Stats box if loaded */}
+            {selectedComm && formattedHistory.length > 0 && !loading && (
+              <div className="bg-gradient-to-br from-[#121E3D] to-[#0A1128] border border-[#1C2E5A] rounded-2xl p-6 shadow-xl relative overflow-hidden">
+                 <div className="absolute top-0 right-0 w-32 h-32 bg-[#D4AF37]/5 rounded-full blur-3xl"></div>
+                 <div className="text-gray-500 text-sm font-bold uppercase tracking-wider mb-2">
+                   {language === 'ar' ? selectedComm.name_ar : selectedComm.name_en}
+                 </div>
+                 <div className="flex items-end gap-3 mb-4 text-white">
+                   <PriceDisplay price={stats.lastPrice} className="text-4xl font-black" />
+                   <span className="text-xl text-[#D4AF37] pb-1">{selectedComm.currency}</span>
+                 </div>
+                 
+                 <div className={`flex items-center gap-2 font-bold ${isUp ? 'text-[#10B981]' : 'text-[#EF4444]'}`}>
+                    <Activity size={20} />
+                    <span>{isUp ? '+' : ''}{changePct.toFixed(2)}%</span>
+                    <span className="text-sm opacity-70">({isUp ? '+' : ''}{changeVal.toFixed(2)})</span>
+                 </div>
+              </div>
+            )}
+          </div>
+
+          {/* Main Chart Area */}
+          <div className="lg:w-2/3">
+            <div className="bg-[#121E3D] border border-[#1C2E5A] rounded-2xl p-6 md:p-8 shadow-xl min-h-[500px] flex flex-col">
+              {loading ? (
+                <div className="flex-1 flex flex-col items-center justify-center">
+                  <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-l-2 border-[#D4AF37] mb-4"></div>
+                  <div className="text-gray-400">{language === 'ar' ? 'جارٍ جلب البيانات التاريخية...' : 'Fetching historical data...'}</div>
+                </div>
+              ) : formattedHistory.length === 0 ? (
+                <div className="flex-1 flex flex-col items-center justify-center text-center p-10">
+                  <div className="w-24 h-24 bg-[#0A1128] rounded-full flex items-center justify-center mb-6 border border-[#1C2E5A]">
+                    <History className="text-gray-600" size={40} />
+                  </div>
+                  <h3 className="text-xl font-bold text-white mb-2">
+                    {language === 'ar' ? 'لا توجد بيانات تاريخية كافية لهذه السلعة' : 'Insufficient Data'}
+                  </h3>
+                  <p className="text-gray-500 max-w-md">
+                    {language === 'ar' 
+                      ? 'لا توجد بيانات تاريخية مسجلة لهذه السلعة في الفترة الزمنية المحددة.' 
+                      : 'No historical data recorded for this commodity in the selected time period.'}
+                  </p>
+                </div>
+              ) : (
+                <div className="flex-1 flex flex-col">
+                  {/* Chart */}
+                  <div className="h-80 md:h-[400px] w-full mb-8" dir="ltr">
+                    <ResponsiveContainer width="100%" height="100%">
+                       <AreaChart data={formattedHistory}>
+                          <defs>
+                             <linearGradient id="colorMain" x1="0" y1="0" x2="0" y2="1">
+                                <stop offset="5%" stopColor={isUp ? '#10B981' : '#EF4444'} stopOpacity={0.4}/>
+                                <stop offset="95%" stopColor={isUp ? '#10B981' : '#EF4444'} stopOpacity={0}/>
+                             </linearGradient>
+                          </defs>
+                          <CartesianGrid strokeDasharray="3 3" stroke="#1C2E5A" vertical={false} />
+                          <XAxis dataKey="time" stroke="#6B7280" fontSize={12} tickMargin={12} />
+                          <YAxis 
+                            dataKey="price"
+                            stroke="#6B7280" 
+                            fontSize={12} 
+                            domain={['auto', 'auto']}
+                            tickFormatter={(val) => val.toFixed(2)}
+                            tickMargin={12}
+                          />
+                          <Tooltip 
+                             contentStyle={{ backgroundColor: '#0A1128', borderColor: '#1C2E5A', borderRadius: '12px', padding: '12px' }}
+                             itemStyle={{ color: '#fff', fontWeight: 'bold' }}
+                             labelStyle={{ color: '#9CA3AF', marginBottom: '8px' }}
+                          />
+                          <Area 
+                             type="monotone" 
+                             dataKey="price" 
+                             stroke={isUp ? '#10B981' : '#EF4444'} 
+                             fillOpacity={1} 
+                             fill="url(#colorMain)" 
+                             strokeWidth={4}
+                          />
+                       </AreaChart>
+                    </ResponsiveContainer>
+                  </div>
+
+                  {/* Summary Stats Grid */}
+                  <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mt-auto">
+                     {[
+                        { label: language === 'ar' ? 'السعر الأول' : 'First Price', value: stats.firstPrice.toFixed(2) },
+                        { label: language === 'ar' ? 'السعر الأخير' : 'Last Price', value: stats.lastPrice.toFixed(2) },
+                        { label: language === 'ar' ? 'أعلى سعر' : 'Highest Price', value: stats.highPrice.toFixed(2) },
+                        { label: language === 'ar' ? 'أدنى سعر' : 'Lowest Price', value: stats.lowPrice.toFixed(2) },
+                        { label: language === 'ar' ? 'مقدار التغير' : 'Change Value', value: `${changeVal >= 0 ? '+' : ''}${changeVal.toFixed(2)}`, color: changeVal >= 0 ? 'text-[#10B981]' : 'text-[#EF4444]' },
+                        { label: language === 'ar' ? 'نسبة التغير' : 'Change Percent', value: `${changePct >= 0 ? '+' : ''}${changePct.toFixed(2)}%`, color: changePct >= 0 ? 'text-[#10B981]' : 'text-[#EF4444]' },
+                        { label: language === 'ar' ? 'تاريخ أول تسجيل' : 'First Recorded Date', value: new Date(stats.firstDate).toLocaleDateString(language === 'ar' ? 'ar-LY' : 'en-US') },
+                        { label: language === 'ar' ? 'تاريخ آخر تسجيل' : 'Last Recorded Date', value: new Date(stats.lastDate).toLocaleDateString(language === 'ar' ? 'ar-LY' : 'en-US') }
+                     ].map((stat, i) => (
+                        <div key={i} className="bg-[#0A1128] border border-[#1C2E5A] p-4 rounded-xl text-center">
+                           <div className="text-[10px] text-gray-500 uppercase tracking-widest font-bold mb-2">{stat.label}</div>
+                           <div className={`text-lg font-bold ${stat.color || 'text-white'}`}>{stat.value}</div>
+                        </div>
+                     ))}
+                  </div>
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+
+      </div>
+    </div>
+  );
+};

@@ -11,6 +11,7 @@ export interface Commodity {
   symbol: string;
   sectorAr: Sector;
   sectorEn: SectorEn;
+  sector?: string;
   price: number;
   prevClose: number;
   changeAmount: number;

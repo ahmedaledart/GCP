@@ -5,47 +5,35 @@ import Markdown from 'react-markdown';
 import { motion, AnimatePresence } from 'motion/react';
 import { supabase } from '../lib/supabase';
 import { useAuth } from '../context/AuthContext';
+import { useMarketData } from '../context/MarketContext';
 import { AccessRestricted } from '../components/AccessRestricted';
 
 export const Reports = () => {
   const { language } = useLanguage();
   const { platformUser } = useAuth();
+  const { analyses: analysesData, loading: marketLoading } = useMarketData();
   const [reports, setReports] = useState<any[]>([]);
   const [selectedReport, setSelectedReport] = useState<any>(null);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    const fetchReports = async () => {
-      try {
-        const { data } = await supabase
-          .from('analyses')
-          .select('*')
-          .eq('status', 'published')
-          .order('created_at', { ascending: false });
-        
-        if (data) {
-          const fetchedReports = data.map(a => ({ 
-            id: a.id, 
-            titleAr: a.title_ar,
-            titleEn: a.title_en,
-            contentAr: a.content_ar,
-            contentEn: a.content_en,
-            publishedAt: a.created_at,
-            ...a
-          }));
-          setReports(fetchedReports);
-          if (fetchedReports.length > 0) {
-            setSelectedReport(fetchedReports[0]);
-          }
-        }
-      } catch (e) {
-        console.error('Error fetching reports:', e);
-      } finally {
-        setLoading(false);
+    if (analysesData) {
+      const fetchedReports = analysesData.map((a: any) => ({ 
+        id: a.id, 
+        titleAr: a.title_ar,
+        titleEn: a.title_en,
+        contentAr: a.content_ar,
+        contentEn: a.content_en,
+        publishedAt: a.created_at,
+        ...a
+      }));
+      setReports(fetchedReports);
+      if (fetchedReports.length > 0 && !selectedReport) {
+        setSelectedReport(fetchedReports[0]);
       }
-    };
-    fetchReports();
-  }, []);
+      setLoading(marketLoading);
+    }
+  }, [analysesData, marketLoading, selectedReport]);
 
   const handleDownload = () => {
     if (!selectedReport) return;

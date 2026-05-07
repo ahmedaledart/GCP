@@ -76,9 +76,9 @@ export const Footer = () => {
             <h3 className="text-lg font-bold text-white mb-6 border-b border-[#1C2E5A] pb-2 inline-block">{t('quickLinks')}</h3>
             <ul className="space-y-3">
               <li><Link to="/" className="text-gray-400 hover:text-[#D4AF37] transition-colors text-sm">{t('home')}</Link></li>
-              <li><Link to="/markets" className="text-gray-400 hover:text-[#D4AF37] transition-colors text-sm">{t('energyPrices')}</Link></li>
-              <li><Link to="/markets" className="text-gray-400 hover:text-[#D4AF37] transition-colors text-sm">{t('metalsPrices')}</Link></li>
-              <li><Link to="/markets" className="text-gray-400 hover:text-[#D4AF37] transition-colors text-sm">{t('agriPrices')}</Link></li>
+              <li><Link to="/markets?sector=energy#table" className="text-gray-400 hover:text-[#D4AF37] transition-colors text-sm">{t('energyPrices')}</Link></li>
+              <li><Link to="/markets?sector=metals#table" className="text-gray-400 hover:text-[#D4AF37] transition-colors text-sm">{t('metalsPrices')}</Link></li>
+              <li><Link to="/markets?sector=commodities#table" className="text-gray-400 hover:text-[#D4AF37] transition-colors text-sm">{t('agriPrices')}</Link></li>
               <li><Link to="/faq" className="text-gray-400 hover:text-[#D4AF37] transition-colors text-sm">{t('faq')}</Link></li>
               <li><Link to="/contact" className="text-gray-400 hover:text-[#D4AF37] transition-colors text-sm">{t('contact')}</Link></li>
             </ul>

@@ -1,13 +1,15 @@
-import React from 'react';
+import React, { useState } from 'react';
 import { useMarketData } from '../context/MarketContext';
 import { ArrowUpRight, ArrowDownRight, Activity } from 'lucide-react';
 import { ResponsiveContainer, AreaChart, Area, YAxis } from 'recharts';
 import { useLanguage } from '../context/LanguageContext';
 import { PriceDisplay } from './PriceDisplay';
+import { CommodityHistoryModal } from './CommodityHistoryModal';
 
 export const TopCommodities = () => {
   const { data, loading, error, isMockData } = useMarketData();
   const { t, language } = useLanguage();
+  const [selectedCommodity, setSelectedCommodity] = useState<any>(null);
   
   if (loading) {
     return (
@@ -111,7 +113,11 @@ export const TopCommodities = () => {
             const unit = rawUnit;
 
             return (
-              <div key={item.id} className="bg-[#121E3D] rounded-2xl p-6 border border-[#1C2E5A] hover:border-[#2A4075] transition-all group relative overflow-hidden">
+              <div 
+                key={item.id} 
+                onClick={() => setSelectedCommodity(item)}
+                className="bg-[#121E3D] rounded-2xl p-6 border border-[#1C2E5A] hover:border-[#D4AF37]/50 transition-all group relative overflow-hidden cursor-pointer"
+              >
                 {/* Background Glow */}
                 <div className="absolute -top-10 -right-10 w-32 h-32 rounded-full mix-blend-screen filter blur-3xl opacity-20 transition-opacity group-hover:opacity-40" style={{ backgroundColor: color }}></div>
                 
@@ -170,6 +176,13 @@ export const TopCommodities = () => {
             );
           })}
         </div>
+        
+        {selectedCommodity && (
+           <CommodityHistoryModal 
+             commodity={selectedCommodity} 
+             onClose={() => setSelectedCommodity(null)} 
+           />
+        )}
       </div>
     </section>
   );

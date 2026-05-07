@@ -29,11 +29,17 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     const initAuth = async () => {
       try {
         const { data: { session }, error } = await supabase.auth.getSession();
-        if (error) throw error;
+        if (error) {
+          console.warn('Session error:', error.message);
+        }
         
-        setUser(session?.user ?? null);
-        if (session?.user) {
-          await fetchPlatformUser(session.user.id);
+        const currentUser = session?.user ?? null;
+        setUser(currentUser);
+        
+        if (currentUser) {
+          await fetchPlatformUser(currentUser.id);
+        } else {
+          setPlatformUser(null);
         }
       } catch (err) {
         console.error('Auth initialization error:', err);

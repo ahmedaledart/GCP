@@ -24,8 +24,10 @@ export const generateWithRetry = async (
     for (const modelName of models) {
       try {
         const config: any = {};
-        if (options.search) {
+        if (options.search && attempt < MAX_RETRIES - 1) { // Disable search on the final retry attempt to bypass grounding-related 500 errors
           config.tools = [{ googleSearch: {} }];
+        } else if (options.search) {
+           console.warn('Disabling search for the final retry attempt to bypass grounding issues');
         }
         if (options.json) {
           config.responseMimeType = "application/json";
@@ -50,11 +52,12 @@ export const generateWithRetry = async (
         const isHighDemand = err?.message?.includes('high demand');
         const isQuota = err?.message?.includes('quota');
         const isNotFound = err?.message?.includes('404') || err?.message?.includes('not found');
+        const isInternalError = err?.message?.includes('500') || err?.message?.toLowerCase().includes('internal');
         
         console.warn(`Attempt ${attempt + 1} with model ${modelName} failed:`, err.message);
 
         // Try the next model in the list
-        if (isRateLimit || isHighDemand || isQuota || isNotFound) {
+        if (isRateLimit || isHighDemand || isQuota || isNotFound || isInternalError) {
            if (modelName === models[models.length - 1]) {
              // If we're at the last model, wait before the next attempt
              await new Promise(r => setTimeout(r, SLEEP_BEFORE_RETRY_MS * (attempt + 1)));

@@ -6,6 +6,7 @@ import { format } from 'date-fns';
 import { ar } from 'date-fns/locale';
 import { useLanguage } from '../context/LanguageContext';
 import { PriceDisplay } from './PriceDisplay';
+import { CommodityHistoryModal } from './CommodityHistoryModal';
 import * as XLSX from 'xlsx';
 import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
@@ -45,7 +46,7 @@ export const AdvancedTable = () => {
   const location = useLocation();
   const [searchTerm, setSearchTerm] = useState('');
   const [debouncedSearchTerm, setDebouncedSearchTerm] = useState('');
-  const [selectedSector, setSelectedSector] = useState<Sector | SectorEn | 'all'>('all');
+  const [selectedSector, setSelectedSector] = useState<string>('all');
   const [sortConfig, setSortConfig] = useState<SortConfig>({ key: null, direction: 'asc' });
   const [showColumnDropdown, setShowColumnDropdown] = useState(false);
   const [selectedCommodity, setSelectedCommodity] = useState<any>(null);
@@ -56,8 +57,21 @@ export const AdvancedTable = () => {
     const q = searchParams.get('search');
     if (q) {
       setSearchTerm(decodeURIComponent(q));
-      
-      // Auto-scroll to table if redirected from search
+    }
+    
+    const sector = searchParams.get('sector');
+    if (sector) {
+      if (['الطاقة', 'Energy', 'energy'].includes(sector)) setSelectedSector('energy' as any);
+      else if (['المعادن', 'Metals', 'metals'].includes(sector)) setSelectedSector('metals' as any);
+      else if (['السلع الزراعية', 'السلع الأساسية', 'Agriculture', 'agriculture', 'commodities'].includes(sector)) setSelectedSector('commodities' as any);
+      else if (['المؤشرات', 'Indices', 'indices'].includes(sector)) setSelectedSector('indices' as any);
+      else if (['الشحن', 'Shipping', 'shipping'].includes(sector)) setSelectedSector('shipping' as any);
+      else if (['العملات', 'Currencies', 'forex'].includes(sector)) setSelectedSector('forex' as any);
+      else setSelectedSector('all');
+    }
+
+    if (q || sector) {
+      // Auto-scroll to table if redirected
       const tableEl = document.getElementById('table');
       if (tableEl && location.hash === '#table') {
         setTimeout(() => tableEl.scrollIntoView({ behavior: 'smooth' }), 500);
@@ -98,9 +112,18 @@ export const AdvancedTable = () => {
     return () => document.removeEventListener('mousedown', handleClickOutside);
   }, []);
 
-  const sectorsAr: (Sector | 'all')[] = ['all', 'الطاقة', 'المعادن', 'السلع الزراعية', 'المؤشرات'];
-  const sectorsEn: (SectorEn | 'all')[] = ['all', 'Energy', 'Metals', 'Agriculture', 'Indices'];
-  const sectors = language === 'ar' ? sectorsAr : sectorsEn;
+  const sectors = ['all', 'energy', 'metals', 'commodities', 'indices', 'shipping', 'forex'];
+
+    const getSectorLabel = (sectorKey: string, lang: string) => {
+    if (sectorKey === 'all') return t('allSectors');
+    if (sectorKey === 'energy') return lang === 'ar' ? 'الطاقة' : 'Energy';
+    if (sectorKey === 'metals') return lang === 'ar' ? 'المعادن' : 'Metals';
+    if (sectorKey === 'agriculture' || sectorKey === 'commodities') return lang === 'ar' ? 'السلع الأساسية' : 'Commodities';
+    if (sectorKey === 'indices') return lang === 'ar' ? 'المؤشرات' : 'Indices';
+    if (sectorKey === 'shipping') return lang === 'ar' ? 'الشحن' : 'Shipping';
+    if (sectorKey === 'forex') return lang === 'ar' ? 'العملات' : 'Currencies';
+    return sectorKey;
+  };
 
   const handleSort = (key: keyof typeof commoditiesData[0]) => {
     let direction: 'asc' | 'desc' = 'asc';
@@ -311,9 +334,22 @@ export const AdvancedTable = () => {
 
     // Filter by sector
     if (selectedSector !== 'all') {
-      filterableData = filterableData.filter(item => 
-        item.sectorAr === selectedSector || item.sectorEn === selectedSector
-      );
+      console.log('selectedSector:', selectedSector);
+      console.log('commodities sectors:', filterableData.map(c => c.sector));
+      
+      filterableData = filterableData.filter(item => {
+        const itemSector = item.sector || (item as any).sectorAr || (item as any).sectorEn;
+        if (item.sector === selectedSector) return true;
+        // Fallback checks just in case
+        if (selectedSector === 'energy' && (itemSector === 'الطاقة' || itemSector === 'Energy')) return true;
+        if (selectedSector === 'metals' && (itemSector === 'المعادن' || itemSector === 'Metals')) return true;
+        if ((selectedSector === 'agriculture' || selectedSector === 'commodities') && (itemSector === 'السلع الزراعية' || itemSector === 'السلع الأساسية' || itemSector === 'Agriculture' || itemSector === 'commodities')) return true;
+        if (selectedSector === 'indices' && (itemSector === 'المؤشرات' || itemSector === 'Indices')) return true;
+        if (selectedSector === 'shipping' && (itemSector === 'الشحن' || itemSector === 'Shipping')) return true;
+        if (selectedSector === 'forex' && (itemSector === 'العملات' || itemSector === 'Currencies')) return true;
+        return false;
+      });
+      console.log(`filtered results:`, filterableData.length);
     }
 
     // Filter by search
@@ -409,7 +445,7 @@ export const AdvancedTable = () => {
                   onChange={(e) => setSelectedSector(e.target.value as any)}
                 >
                   {sectors.map((sector, idx) => (
-                    <option key={idx} value={sector}>{sector === 'all' ? t('allSectors') : sector}</option>
+                    <option key={idx} value={sector}>{getSectorLabel(sector, language)}</option>
                   ))}
                 </select>
                 <ChevronDown size={14} className={`absolute ${language === 'ar' ? 'left-3' : 'right-3'} top-1/2 -translate-y-1/2 text-gray-400 pointer-events-none`} />
@@ -707,126 +743,12 @@ export const AdvancedTable = () => {
           </div>
           
           {/* Details Modal */}
-          <AnimatePresence>
-            {selectedCommodity && (
-              <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm">
-                <motion.div 
-                  initial={{ opacity: 0, scale: 0.9, y: 20 }}
-                  animate={{ opacity: 1, scale: 1, y: 0 }}
-                  exit={{ opacity: 0, scale: 0.9, y: 20 }}
-                  className="bg-[#121E3D] border border-[#1C2E5A] rounded-2xl w-full max-w-4xl max-h-[90vh] overflow-y-auto shadow-2xl relative"
-                >
-                  <button 
-                    onClick={() => setSelectedCommodity(null)}
-                    className="absolute top-4 right-4 text-gray-400 hover:text-white transition-colors z-10 p-2 bg-[#0A1128]/50 rounded-full"
-                  >
-                    <X size={24} />
-                  </button>
-
-                  <div className="p-6 md:p-10">
-                    <div className="flex flex-col md:flex-row justify-between items-start mb-8 gap-6">
-                      <div className="flex items-center gap-4">
-                        <div className="p-4 bg-[#D4AF37]/10 rounded-2xl border border-[#D4AF37]/20">
-                          <TrendingUp className="text-[#D4AF37]" size={32} />
-                        </div>
-                        <div>
-                          <h2 className="text-3xl font-bold text-white mb-1">
-                            {language === 'ar' ? selectedCommodity.nameAr : selectedCommodity.nameEn}
-                          </h2>
-                          <div className="flex items-center gap-2">
-                            <span className="text-gray-400 font-mono text-lg">{selectedCommodity.symbol}</span>
-                            <span className="px-2 py-0.5 rounded bg-[#1C2E5A] text-xs text-gray-300">
-                              {language === 'ar' ? selectedCommodity.sectorAr : selectedCommodity.sectorEn}
-                            </span>
-                          </div>
-                        </div>
-                      </div>
-
-                      <div className="bg-[#0A1128] p-6 rounded-2xl border border-[#1C2E5A] w-full md:w-auto min-w-[200px]">
-                        <div className="text-gray-500 text-sm mb-1 uppercase tracking-wider font-bold">{t('currentPrice')}</div>
-                        <div className="flex items-center gap-2" dir="ltr">
-                          <span className="text-xl text-[#D4AF37]">
-                            {selectedCommodity.currency === 'LYD' ? 'د.ل' : selectedCommodity.currency === 'EUR' ? '€' : selectedCommodity.currency === 'USD' ? '$' : selectedCommodity.currency}
-                          </span>
-                          <PriceDisplay price={selectedCommodity.price} className="text-4xl font-bold text-white" />
-                        </div>
-                        <div className={`flex items-center gap-2 mt-2 font-bold ${selectedCommodity.trend === 'up' ? 'text-[#10B981]' : 'text-[#EF4444]'}`}>
-                          <Activity size={18} />
-                          <span>{selectedCommodity.trend === 'up' ? '+' : ''}{selectedCommodity.changePercent}%</span>
-                          <span className="text-xs opacity-70">({selectedCommodity.trend === 'up' ? '+' : ''}{selectedCommodity.changeAmount})</span>
-                        </div>
-                      </div>
-                    </div>
-
-                    {/* Chart Area */}
-                    <div className="bg-[#0A1128] rounded-2xl p-6 border border-[#1C2E5A] mb-8">
-                       <div className="flex justify-between items-center mb-6">
-                          <h3 className="text-lg font-bold text-white flex items-center gap-2">
-                             <Info size={18} className="text-[#D4AF37]" /> {language === 'ar' ? 'تحليل التحركات السعرية (24 ساعة)' : 'Price Performance Analysis (24h)'}
-                          </h3>
-                       </div>
-                       <div className="h-64 md:h-80 w-full" dir="ltr">
-                          <ResponsiveContainer width="100%" height="100%">
-                             <AreaChart data={selectedCommodity.history}>
-                                <defs>
-                                   <linearGradient id="colorPrice" x1="0" y1="0" x2="0" y2="1">
-                                      <stop offset="5%" stopColor={selectedCommodity.trend === 'up' ? '#10B981' : '#EF4444'} stopOpacity={0.3}/>
-                                      <stop offset="95%" stopColor={selectedCommodity.trend === 'up' ? '#10B981' : '#EF4444'} stopOpacity={0}/>
-                                   </linearGradient>
-                                </defs>
-                                <CartesianGrid strokeDasharray="3 3" stroke="#1C2E5A" vertical={false} />
-                                <XAxis dataKey="time" stroke="#6B7280" fontSize={12} tickMargin={10} />
-                                <YAxis 
-                                  stroke="#6B7280" 
-                                  fontSize={12} 
-                                  domain={['auto', 'auto']}
-                                  tickFormatter={(val) => val.toFixed(2)}
-                                />
-                                <Tooltip 
-                                   contentStyle={{ backgroundColor: '#121E3D', borderColor: '#1C2E5A', borderRadius: '8px' }}
-                                   itemStyle={{ color: '#fff' }}
-                                />
-                                <Area 
-                                   type="monotone" 
-                                   dataKey="price" 
-                                   stroke={selectedCommodity.trend === 'up' ? '#10B981' : '#EF4444'} 
-                                   fillOpacity={1} 
-                                   fill="url(#colorPrice)" 
-                                   strokeWidth={3}
-                                />
-                             </AreaChart>
-                          </ResponsiveContainer>
-                       </div>
-                    </div>
-
-                    {/* Stats Grid */}
-                    <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-                       {[
-                          { label: t('high'), value: (selectedCommodity.high || 0).toFixed(2) },
-                          { label: t('low'), value: (selectedCommodity.low || 0).toFixed(2) },
-                          { label: t('prevClose'), value: (selectedCommodity.prevClose || 0).toFixed(2) },
-                          { label: language === 'ar' ? 'الوحدة' : 'Unit', value: language === 'ar' ? selectedCommodity.unitAr : selectedCommodity.unitEn }
-                       ].map((stat, i) => (
-                          <div key={i} className="bg-[#0A1128] border border-[#1C2E5A] p-4 rounded-xl text-center">
-                             <div className="text-[10px] text-gray-500 uppercase tracking-widest font-bold mb-1">{stat.label}</div>
-                             <div className="text-white font-bold">{stat.value}</div>
-                          </div>
-                       ))}
-                    </div>
-
-                    <div className="mt-8 p-4 bg-blue-500/10 border border-blue-500/20 rounded-xl flex items-start gap-4">
-                       <Info className="text-blue-400 shrink-0 mt-1" size={20} />
-                       <p className="text-sm text-blue-300 leading-relaxed italic">
-                          {language === 'ar' 
-                            ? `هذا التحليل الصادر عن منصة "عالم الأسعار" يوضح تقلبات السعر في الـ 24 ساعة الماضية. الأسعار المعروضة هي أسعار مباشرة من البورصات العالمية.`
-                            : `This analysis from the "Price World" platform shows price fluctuations over the last 24 hours. Displayed prices are live from international exchanges.`}
-                       </p>
-                    </div>
-                  </div>
-                </motion.div>
-              </div>
-            )}
-          </AnimatePresence>
+          {selectedCommodity && (
+            <CommodityHistoryModal 
+              commodity={selectedCommodity} 
+              onClose={() => setSelectedCommodity(null)} 
+            />
+          )}
 
           {/* Table Footer */}
           <div className="p-4 border-t border-[#1C2E5A] bg-[#0A1128] flex flex-col sm:flex-row justify-between items-center gap-4 text-sm text-gray-400">

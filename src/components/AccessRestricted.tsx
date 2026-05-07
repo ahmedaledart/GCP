@@ -2,6 +2,7 @@ import React from 'react';
 import { useLanguage } from '../context/LanguageContext';
 import { useAuth } from '../context/AuthContext';
 import { Lock, LogIn, UserPlus, Clock, Ban, ShieldAlert } from 'lucide-react';
+import { supabase } from '../lib/supabase';
 import { motion } from 'motion/react';
 import { useNavigate } from 'react-router-dom';
 
@@ -65,7 +66,7 @@ export const AccessRestricted = () => {
         {user && (
           <div className="flex flex-col sm:flex-row items-center justify-center gap-4">
              <button 
-              onClick={() => { supabase.auth.signOut(); window.location.reload(); }}
+              onClick={() => { supabase.auth.signOut(); window.location.href = '/'; }}
               className="w-full sm:w-auto bg-[#1C2E5A] text-white px-10 py-5 rounded-2xl font-black text-sm uppercase tracking-widest hover:bg-[#25396D] transition-all shadow-xl border border-[#2A4075]"
             >
               {language === 'ar' ? 'تسجيل الخروج والرجوع' : 'Logout and Go Back'}

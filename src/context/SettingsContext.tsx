@@ -76,7 +76,6 @@ export const SettingsProvider: React.FC<{ children: React.ReactNode }> = ({ chil
           
         if (error) {
           console.warn('Could not load platform_settings from Supabase:', error);
-          if (isMounted) setLoading(false);
           return;
         }
 
@@ -110,10 +109,10 @@ export const SettingsProvider: React.FC<{ children: React.ReactNode }> = ({ chil
             privacyPolicyAr: settingsMap.privacy_policy_ar || prev.privacyPolicyAr,
             termsAr: settingsMap.terms_ar || prev.termsAr,
           }));
-          setLoading(false);
         }
       } catch (err) {
         console.error('Error fetching platform settings:', err);
+      } finally {
         if (isMounted) setLoading(false);
       }
     };

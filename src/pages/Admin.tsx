@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { 
   Plus, Trash2, Save, ToggleLeft, ToggleRight, Shield, 
-  LayoutDashboard, TrendingUp, Newspaper, Settings, 
+  LayoutDashboard, TrendingUp, Newspaper, Settings,
   History, LogOut, ChevronRight, ChevronLeft, ExternalLink, Globe, Image as ImageIcon,
   FileText, FileSpreadsheet, Users, Database, Download, Upload, RefreshCw,
   Bell, Search, Menu, X, MessageSquare, User, Zap, Mail, BarChart3, AlertCircle, Lock,
@@ -22,10 +22,45 @@ import { SectorsTab, DataSourcesTab, ExchangeRatesTab, UsersTab, LegalTab, Backu
 import { AdminUsersTab } from '../components/admin/AdminUsersTab';
 import { PlatformUsersTab } from '../components/admin/PlatformUsersTab';
 import { PlatformSettingsTab } from '../components/admin/PlatformSettingsTab';
+import { ApiSourcesTab } from '../components/admin/ApiSourcesTab';
 
 const ADMIN_EMAIL = "ahmedhmeda67@gmail.com";
 
+class AdminErrorBoundary extends React.Component<{children: React.ReactNode, language: string}, {hasError: boolean, error: Error | null}> {
+  constructor(props: any) {
+    super(props);
+    this.state = { hasError: false, error: null };
+  }
+  static getDerivedStateFromError(error: any) {
+    return { hasError: true, error };
+  }
+  componentDidCatch(error: any, errorInfo: any) {
+    console.error("Admin Error Boundary caught an error:", error, errorInfo);
+  }
+  render() {
+    if (this.state.hasError) {
+      return (
+        <div className="p-10 m-10 bg-red-500/10 border border-red-500 rounded-2xl text-red-500 font-bold font-mono" dir="ltr">
+          <h2>Dashboard Crashed!</h2>
+          <p>{this.state.error?.toString()}</p>
+          <button onClick={() => window.location.href = '/admin'} className="mt-4 px-4 py-2 bg-red-500 text-white rounded">Reload</button>
+        </div>
+      );
+    }
+    return this.props.children;
+  }
+}
+
 export const Admin = () => {
+  const { language } = useLanguage();
+  return (
+    <AdminErrorBoundary language={language}>
+      <AdminInner />
+    </AdminErrorBoundary>
+  );
+};
+
+const AdminInner = () => {
   const { t, language } = useLanguage();
   const navigate = useNavigate();
   const [user, setUser] = useState<any>(null);
@@ -82,6 +117,31 @@ export const Admin = () => {
   });
 
   const [adminUser, setAdminUser] = useState<any>(null);
+  const [toast, setToast] = useState<{ message: string, type: 'success' | 'error' } | null>(null);
+
+  const showToast = (message: string, type: 'success' | 'error' = 'success') => {
+    setToast({ message, type });
+    setTimeout(() => setToast(null), 3000);
+  };
+
+  useEffect(() => {
+    if (!isAdmin) return;
+    
+    // Global realtime listeners for admin to keep UI in sync
+    const channels = [
+      supabase.channel('admin-commodities').on('postgres_changes', { event: '*', schema: 'public', table: 'commodities' }, () => fetchData()),
+      supabase.channel('admin-news').on('postgres_changes', { event: '*', schema: 'public', table: 'news' }, () => fetchData()),
+      supabase.channel('admin-analyses').on('postgres_changes', { event: '*', schema: 'public', table: 'analyses' }, () => fetchData()),
+      supabase.channel('admin-sectors').on('postgres_changes', { event: '*', schema: 'public', table: 'sectors' }, () => fetchData()),
+      supabase.channel('admin-settings').on('postgres_changes', { event: '*', schema: 'public', table: 'platform_settings' }, () => fetchData())
+    ];
+
+    channels.forEach(channel => channel.subscribe());
+
+    return () => {
+      channels.forEach(channel => supabase.removeChannel(channel));
+    };
+  }, [isAdmin]);
 
   useEffect(() => {
     // Listen to Supabase Auth changes
@@ -152,35 +212,44 @@ export const Admin = () => {
     const checkSession = async () => {
       try {
         const { data: { session }, error: sessionError } = await supabase.auth.getSession();
-        if (sessionError) throw sessionError;
+        if (sessionError) {
+          console.warn('Check session warning:', sessionError.message);
+        }
 
         if (session?.user) {
           const currentUser = session.user;
           setUser(currentUser);
           
-          const { data: adminData, error: adminQueryError } = await supabase
-            .from('admin_users')
-            .select('*')
-            .eq('email', currentUser.email)
-            .single();
+          try {
+            const { data: adminData, error: adminQueryError } = await supabase
+              .from('admin_users')
+              .select('*')
+              .eq('email', currentUser.email)
+              .single();
 
-          if (adminData?.is_active) {
-            setIsAdmin(true);
-            setAdminUser(adminData);
-          } else if (currentUser.email === ADMIN_EMAIL) {
-            setIsAdmin(true);
-            setAdminUser({
-              email: currentUser.email,
-              role: 'super_admin',
-              is_active: true,
-              can_manage_admins: true,
-              permissions: ['*']
-            });
+            if (adminQueryError && adminQueryError.code !== 'PGRST116') {
+              console.warn('Admin query warning:', adminQueryError.message);
+            }
+
+            if (adminData?.is_active) {
+              setIsAdmin(true);
+              setAdminUser(adminData);
+            } else if (currentUser.email === ADMIN_EMAIL) {
+              setIsAdmin(true);
+              setAdminUser({
+                email: currentUser.email,
+                role: 'super_admin',
+                is_active: true,
+                can_manage_admins: true,
+                permissions: ['*']
+              });
+            }
+          } catch (adminErr) {
+            console.error('Failed to parse admin data:', adminErr);
           }
         }
       } catch (err) {
         console.error('Check session error:', err);
-        // On session error, we don't throw, just allow guest/login view
       } finally {
         setLoading(false);
       }
@@ -212,7 +281,7 @@ export const Admin = () => {
       
       // Commodities
       const { data: commData, error: commError } = await supabase.from('commodities').select('*').order('created_at', { ascending: false });
-      if (commError) throw commError;
+      if (commError) { console.error('Error fetching commodities:', commError); }
       if (commData) {
         setCommodities(commData.map(c => ({
           id: String(c.id),
@@ -239,7 +308,7 @@ export const Admin = () => {
 
       // News
       const { data: newsData, error: newsError } = await supabase.from('news').select('*').order('created_at', { ascending: false });
-      if (newsError) throw newsError;
+      if (newsError) { console.error('Error fetching news:', newsError); }
       if (newsData) {
            setNews(newsData.map(n => ({
              id: String(n.id),
@@ -255,7 +324,7 @@ export const Admin = () => {
 
       // Sectors
       const { data: sectorsData, error: secError } = await supabase.from('sectors').select('*').order('sort_order', { ascending: true });
-      if (secError) throw secError;
+      if (secError) { console.error('Error fetching sectors:', secError); }
       if (sectorsData) {
           setSectors(sectorsData.map(s => ({
               id: String(s.id),
@@ -271,7 +340,7 @@ export const Admin = () => {
 
       // Analyses (Fixed from reports)
       const { data: analysesData, error: anError } = await supabase.from('analyses').select('*').order('created_at', { ascending: false });
-      if (anError) throw anError;
+      if (anError) { console.error('Error fetching analyses:', anError); }
       if (analysesData) {
           setReports(analysesData.map(a => ({
               id: String(a.id),
@@ -291,7 +360,7 @@ export const Admin = () => {
 
       // Messages
       const { data: msgData, error: msgError } = await supabase.from('messages').select('*').order('created_at', { ascending: false });
-      if (msgError) throw msgError;
+      if (msgError) { console.error('Error fetching messages:', msgError); }
       if (msgData) {
           setMessages(msgData.map(m => ({ id: String(m.id), ...m })));
       }
@@ -299,7 +368,7 @@ export const Admin = () => {
       // Logs
       const { data: logsData } = await supabase.from('activity_logs').select('*').order('timestamp', { ascending: false }).limit(50);
       if (logsData) {
-          setLogs(logsData.map(l => ({ id: String(l.id), timestamp: { toDate: () => new Date(l.timestamp) }, ...l })));
+          setLogs(logsData.map(l => ({ ...l, id: String(l.id) })));
       }
 
       // Platform Settings
@@ -374,6 +443,11 @@ export const Admin = () => {
           console.log('Realtime update: messages', payload);
           fetchData();
       })
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'commodity_price_history' }, (payload) => {
+          console.log('Realtime update: Archive', payload);
+          // This will refresh the dashboard stats if any depend on history
+          fetchData();
+      })
       .on('postgres_changes', { event: '*', schema: 'public', table: 'activity_logs' }, (payload) => {
           console.log('Realtime update: logs', payload);
           fetchData();
@@ -431,6 +505,17 @@ export const Admin = () => {
     }
   };
 
+  if (loading) {
+    return (
+      <div className="min-h-screen bg-[#050A18] flex items-center justify-center p-4">
+        <div className="flex flex-col items-center justify-center gap-4">
+           <div className="w-12 h-12 border-4 border-[#1C2E5A] border-t-[#D4AF37] rounded-full animate-spin"></div>
+           <p className="text-gray-400 font-bold uppercase tracking-widest text-xs">Loading Dashboard...</p>
+        </div>
+      </div>
+    );
+  }
+
   if (!isAdmin) {
     return (
       <div className="min-h-screen bg-[#050A18] flex items-center justify-center p-4" dir={language === 'ar' ? 'rtl' : 'ltr'}>
@@ -458,7 +543,7 @@ export const Admin = () => {
                    type="button"
                    onClick={async () => {
                      await supabase.auth.signOut();
-                     window.location.reload();
+                     window.location.href = '/admin';
                    }}
                    className="mt-2 text-[9px] text-[#D4AF37] underline uppercase font-black"
                  >
@@ -517,7 +602,7 @@ export const Admin = () => {
             <button 
               onClick={async () => {
                 await supabase.auth.signOut();
-                window.location.reload();
+                window.location.href = '/admin';
               }}
               className="w-full mt-6 flex items-center justify-center gap-2 text-gray-500 hover:text-white transition-all text-[10px] font-black uppercase tracking-widest"
             >
@@ -575,9 +660,17 @@ export const Admin = () => {
         if (sectorError) throw sectorError;
         const validSectorCodes = new Set((dbSectors || []).map(s => String(s.code || '').trim()));
 
+        // Fetch existing symbols to distinguish between inserts and updates
+        const { data: dbCommodities } = await supabase.from('commodities').select('symbol');
+        const dbSymbols = new Set((dbCommodities || []).map(c => c.symbol));
+
         const validRows: any[] = [];
         const invalidRows: { rowNumber: number; symbol: string; reason: string }[] = [];
         const cleanedRows: any[] = [];
+        
+        const fileSymbols = new Set<string>();
+        let addedCount = 0;
+        let updatedCount = 0;
 
         rawRows.forEach((row: any, index: number) => {
           const rowNumber = index + 2; // Assuming row 1 is header
@@ -602,7 +695,7 @@ export const Admin = () => {
 
           // Cleaning and Parsing
           const cleanSymbol = String(symbol || '').trim().toUpperCase();
-          const cleanSector = String(sector || '').trim();
+          const cleanSector = String(sector || '').trim().toLowerCase();
           const cleanNameAr = String(name_ar || '').trim();
           const cleanNameEn = String(name_en || '').trim();
           const parsedPrice = typeof price === 'number' ? price : Number(String(price || 0).replace(/,/g, ''));
@@ -610,6 +703,10 @@ export const Admin = () => {
           // Validation
           if (!cleanSymbol) {
             invalidRows.push({ rowNumber, symbol: '', reason: 'Missing symbol' });
+            return;
+          }
+          if (fileSymbols.has(cleanSymbol)) {
+            invalidRows.push({ rowNumber, symbol: cleanSymbol, reason: 'Duplicate symbol within file' });
             return;
           }
           if (!cleanNameAr) {
@@ -629,15 +726,19 @@ export const Admin = () => {
             return;
           }
 
+          fileSymbols.add(cleanSymbol);
+
           // Defaults & Extra cleaning
-          const parsedPrevPrice = previous_price !== undefined ? Number(String(previous_price).replace(/,/g, '')) : parsedPrice;
-          const parsedHigh = high !== undefined ? Number(String(high).replace(/,/g, '')) : parsedPrice;
-          const parsedLow = low !== undefined ? Number(String(low).replace(/,/g, '')) : parsedPrice;
+          const parsedPrevPrice = previous_price !== undefined && previous_price !== '' ? Number(String(previous_price).replace(/,/g, '')) : parsedPrice;
+          const parsedHigh = high !== undefined && high !== '' ? Number(String(high).replace(/,/g, '')) : parsedPrice;
+          const parsedLow = low !== undefined && low !== '' ? Number(String(low).replace(/,/g, '')) : parsedPrice;
           
           // Calculations
           const change_value = parsedPrice - parsedPrevPrice;
           const change_percent = parsedPrevPrice > 0 ? ((parsedPrice - parsedPrevPrice) / parsedPrevPrice) * 100 : 0;
-          const trend = parsedPrice > parsedPrevPrice ? 'up' : (parsedPrice < parsedPrevPrice ? 'down' : 'neutral');
+          let trend = 'neutral';
+          if (parsedPrice > parsedPrevPrice) trend = 'up';
+          else if (parsedPrice < parsedPrevPrice) trend = 'down';
 
           const payload = {
             symbol: cleanSymbol,
@@ -652,11 +753,17 @@ export const Admin = () => {
             high: isNaN(parsedHigh) ? parsedPrice : parsedHigh,
             low: isNaN(parsedLow) ? parsedPrice : parsedLow,
             unit: String(unit || '').trim(),
-            source: String(source || 'Manual Entry').trim(),
-            status: String(status || 'active').trim(),
+            source: String(source || 'Manual Entry').trim() || 'Manual Entry',
+            status: String(status || 'active').trim() || 'active',
             is_visible: !(is_visible === false || is_visible === 'false' || is_visible === 0 || is_visible === '0'),
             updated_at: new Date().toISOString()
           };
+
+          if (dbSymbols.has(cleanSymbol)) {
+            updatedCount++;
+          } else {
+            addedCount++;
+          }
 
           cleanedRows.push(payload);
           validRows.push(payload);
@@ -678,8 +785,8 @@ export const Admin = () => {
           }
         }
 
-        const successMsgAr = `تم استيراد ${validRows.length} سلعة بنجاح. فشل: ${invalidRows.length}`;
-        const successMsgEn = `Imported ${validRows.length} commodities successfully. Failed: ${invalidRows.length}`;
+        const successMsgAr = `نتيجة الاستيراد: ${addedCount} سلعة مضافة، ${updatedCount} سلعة محدثة. الصفوف الفاشلة: ${invalidRows.length}`;
+        const successMsgEn = `Import result: ${addedCount} added, ${updatedCount} updated. Failed rows: ${invalidRows.length}`;
 
         setImportFeedback({
           message: language === 'ar' ? successMsgAr : successMsgEn,
@@ -688,7 +795,7 @@ export const Admin = () => {
 
         fetchData();
         setImportConfig({ ...importConfig, file: null });
-        logUserActivity('استيراد بيانات', `استيراد من ملف: ${validRows.length} ناجح، ${invalidRows.length} فشل`);
+        logUserActivity('استيراد بيانات', `استيراد من ملف: إضافات ${addedCount}، تحديثات ${updatedCount}، أخطاء ${invalidRows.length}`);
 
       } catch (err: any) {
         console.error("Import Exception:", err);
@@ -709,10 +816,19 @@ export const Admin = () => {
       return d.toISOString().split('T')[0];
     }).reverse();
 
-    return last7Days.map(date => ({
-      name: date,
-      activity: logs.filter(l => l.timestamp && new Date(l.timestamp).toISOString().split('T')[0] === date).length
-    }));
+    return last7Days.map(date => {
+      const activity = logs.filter(l => {
+        if (!l.timestamp) return false;
+        try {
+          const d = new Date(l.timestamp);
+          if (isNaN(d.getTime())) return false;
+          return d.toISOString().split('T')[0] === date;
+        } catch (e) {
+          return false;
+        }
+      }).length;
+      return { name: date, activity };
+    });
   };
 
   const getSectorData = () => {
@@ -865,6 +981,24 @@ export const Admin = () => {
 
   return (
     <div className={`min-h-screen bg-[#050A18] text-white flex flex-col lg:flex-row relative ${language === 'ar' ? 'rtl' : 'ltr'}`} dir={language === 'ar' ? 'rtl' : 'ltr'}>
+      {/* Toast Notification */}
+      <AnimatePresence>
+        {toast && (
+          <motion.div
+            initial={{ opacity: 0, y: 50, scale: 0.9 }}
+            animate={{ opacity: 1, y: 0, scale: 1 }}
+            exit={{ opacity: 0, y: 50, scale: 0.9 }}
+            className={`fixed bottom-8 ${language === 'ar' ? 'left-8' : 'right-8'} z-[200] px-6 py-4 rounded-2xl shadow-2xl flex items-center gap-3 border ${
+              toast.type === 'success' 
+                ? 'bg-[#10B981] text-white border-[#10B981]/20' 
+                : 'bg-red-500 text-white border-red-500/20'
+            }`}
+          >
+            {toast.type === 'success' ? <Zap size={20} /> : <AlertTriangle size={20} />}
+            <span className="font-bold text-sm uppercase tracking-tight">{toast.message}</span>
+          </motion.div>
+        )}
+      </AnimatePresence>
       {/* Mobile Toggle */}
       <button 
         onClick={() => setIsMobileMenuOpen(!isMobileMenuOpen)}
@@ -929,7 +1063,10 @@ export const Admin = () => {
               {language === 'ar' ? 'أدوات' : 'Tools'}
             </p>
             {(adminUser?.role === 'super_admin' || adminUser?.permissions?.includes('commodities')) && (
-              <NavItem active={activeTab === 'import_csv'} icon={<FileSpreadsheet />} label={language === 'ar' ? 'استيراد CSV' : 'Import CSV'} onClick={() => { setActiveTab('import_csv'); setIsMobileMenuOpen(false); }} language={language} />
+              <>
+                <NavItem active={activeTab === 'import_csv'} icon={<FileSpreadsheet />} label={language === 'ar' ? 'استيراد CSV' : 'Import CSV'} onClick={() => { setActiveTab('import_csv'); setIsMobileMenuOpen(false); }} language={language} />
+                <NavItem active={activeTab === 'api_sources'} icon={<Database />} label={language === 'ar' ? 'مصادر البيانات API' : 'Price Data API'} onClick={() => { setActiveTab('api_sources'); setIsMobileMenuOpen(false); }} language={language} />
+              </>
             )}
           </div>
 
@@ -1133,9 +1270,10 @@ export const Admin = () => {
                                       try {
                                         const { error } = await supabase.from('commodities').update({ is_visible: !item.isVisible }).eq('id', item.id);
                                         if (error) throw error;
+                                        showToast(language === 'ar' ? 'تم التحديث بنجاح' : 'Updated successfully');
                                         fetchData();
                                       } catch (err: any) {
-                                        alert(err.message);
+                                        showToast(err.message, 'error');
                                       }
                                     }}
                                     className={`w-10 h-10 flex items-center justify-center rounded-xl transition-all border ${item.isVisible ? 'text-green-500 hover:bg-green-500/10 border-transparent hover:border-green-500/20' : 'text-gray-500 hover:bg-gray-500/10 border-transparent hover:border-gray-500/20'}`}
@@ -1148,9 +1286,10 @@ export const Admin = () => {
                                       try {
                                         const { error } = await supabase.from('commodities').delete().eq('id', item.id);
                                         if (error) throw error;
+                                        showToast(language === 'ar' ? 'تم الحذف بنجاح' : 'Deleted successfully');
                                         fetchData();
                                       } catch (err: any) {
-                                        alert(err.message);
+                                        showToast(err.message, 'error');
                                       }
                                     } 
                                   }} className="w-10 h-10 flex items-center justify-center text-red-500 hover:bg-red-500/10 rounded-xl transition-all border border-transparent hover:border-red-500/20"><Trash2 size={18} /></button>
@@ -1233,9 +1372,10 @@ export const Admin = () => {
                                  const newIsVisible = !item.is_visible;
                                  const { error } = await supabase.from('news').update({ is_visible: newIsVisible }).eq('id', item.id);
                                  if (error) throw error;
+                                 showToast(language === 'ar' ? 'تم تحديث حالة الخبر' : 'News status updated');
                                  fetchData();
                                } catch (err: any) {
-                                 alert(err.message);
+                                 showToast(err.message, 'error');
                                }
                              }}
                              className={`w-12 h-12 flex items-center justify-center rounded-2xl transition-all border ${item.is_visible ? 'text-green-500 bg-green-500/5 border-green-500/20' : 'text-gray-500 bg-gray-500/5 border-gray-500/20'}`}
@@ -1249,9 +1389,10 @@ export const Admin = () => {
                                  try {
                                    const { error } = await supabase.from('news').delete().eq('id', item.id);
                                    if (error) throw error;
+                                   showToast(language === 'ar' ? 'تم حذف الخبر' : 'News deleted');
                                    fetchData();
                                  } catch (err: any) {
-                                   alert(err.message);
+                                   showToast(err.message, 'error');
                                  }
                                }
                              }}
@@ -1329,9 +1470,10 @@ export const Admin = () => {
                                  try {
                                    const { error } = await supabase.from('analyses').delete().eq('id', report.id);
                                    if (error) throw error;
+                                   showToast(language === 'ar' ? 'تم حذف التحليل' : 'Analysis deleted');
                                    fetchData();
                                  } catch (err: any) {
-                                   alert(err.message);
+                                   showToast(err.message, 'error');
                                  }
                                }
                             }} className="w-11 h-11 flex items-center justify-center bg-[#121E3D] text-red-500 border border-[#1C2E5A] rounded-xl hover:border-red-500/30 transition-all"><Trash2 size={18} /></button>
@@ -1690,7 +1832,7 @@ export const Admin = () => {
                             await supabase.from('platform_settings').upsert({ key: keys[i], value: values[i] }, { onConflict: 'key' });
                           }
                           
-                          alert(t('settingsSaved'));
+                          showToast(t('settingsSaved'));
                           logUserActivity('تحديث الإعدادات', 'تم تحديث إعدادات المنصة بالكامل');
                           fetchData();
                         }}
@@ -1766,7 +1908,7 @@ export const Admin = () => {
                             await supabase.from('platform_settings').upsert({ key: keys[i], value: values[i] }, { onConflict: 'key' });
                           }
                           
-                          alert(t('settingsSaved'));
+                          showToast(t('settingsSaved'));
                           fetchData();
                         }}
                         className="w-full bg-red-500 text-white font-black uppercase tracking-widest py-5 rounded-2xl hover:bg-red-600 transition-all shadow-xl shadow-red-500/10 flex items-center justify-center gap-3"
@@ -1866,6 +2008,7 @@ export const Admin = () => {
               {activeTab === 'interface' && <InterfaceTab />}
               {activeTab === 'charts' && <ChartsTab />}
               {activeTab === 'alerts' && <AlertsTab />}
+              {activeTab === 'api_sources' && <ApiSourcesTab />}
             </motion.div>
           </AnimatePresence>
         </div>
@@ -2114,15 +2257,15 @@ export const Admin = () => {
 
                       if (editingItem.type === 'commodity') {
                         if (!data.symbol || String(data.symbol).trim() === '') {
-                          alert(language === 'ar' ? 'يجب إدخال الرمز' : 'Symbol is required');
+                          showToast(language === 'ar' ? 'يجب إدخال الرمز' : 'Symbol is required', 'error');
                           return;
                         }
                         if (!data.nameAr || String(data.nameAr).trim() === '') {
-                          alert(language === 'ar' ? 'يجب إدخال الاسم العربي' : 'Arabic Name is required');
+                          showToast(language === 'ar' ? 'يجب إدخال الاسم العربي' : 'Arabic Name is required', 'error');
                           return;
                         }
                         if (!data.sectorAr && !data.sector) {
-                          alert(language === 'ar' ? 'يجب إدخال القطاع' : 'Sector is required');
+                          showToast(language === 'ar' ? 'يجب إدخال القطاع' : 'Sector is required', 'error');
                           return;
                         }
 
@@ -2176,13 +2319,13 @@ export const Admin = () => {
                           
                           if (error) throw error;
                           
-                          alert(language === 'ar' ? 'تم الحفظ بنجاح' : 'Saved successfully');
+                          showToast(language === 'ar' ? 'تم الحفظ بنجاح' : 'Saved successfully');
                           logUserActivity(id ? 'تعديل' : 'إضافة', `حفظ سلعة: ${data.nameAr} (${symbol})`);
                           setEditingItem(null);
                           fetchData();
                         } catch (err: any) {
                           console.error('Supabase Error:', err);
-                          alert(language === 'ar' ? `فشلت العملية: ${err.message}` : `Operation failed: ${err.message}`);
+                          showToast(language === 'ar' ? `فشلت العملية: ${err.message}` : `Operation failed: ${err.message}`, 'error');
                         }
                         return;
                       }
@@ -2208,13 +2351,13 @@ export const Admin = () => {
                             const { error } = await supabase.from('news').insert([{...newsData, created_at: new Date().toISOString()}]);
                             if (error) throw error;
                           }
-                          alert(language === 'ar' ? 'تم حفظ الخبر بنجاح' : 'News saved successfully');
+                          showToast(language === 'ar' ? 'تم حفظ الخبر بنجاح' : 'News saved successfully');
                           logUserActivity(id ? 'تعديل' : 'إضافة', `تعديل خبر: ${newsData.title_ar}`);
                           setEditingItem(null);
                           fetchData();
                         } catch (err: any) {
                            console.error("Supabase Error:", err);
-                           alert(language === 'ar' ? `فشلت العملية: ${err.message}` : `Operation failed: ${err.message}`);
+                           showToast(language === 'ar' ? `فشلت العملية: ${err.message}` : `Operation failed: ${err.message}`, 'error');
                         }
                         return;
                       }
@@ -2241,13 +2384,13 @@ export const Admin = () => {
                              const { error } = await supabase.from('analyses').insert([{...reportData, created_at: new Date().toISOString()}]);
                              if (error) throw error;
                            }
-                           alert(language === 'ar' ? 'تم حفظ التحليل بنجاح' : 'Analysis saved successfully');
+                           showToast(language === 'ar' ? 'تم حفظ التحليل بنجاح' : 'Analysis saved successfully');
                            logUserActivity(id ? 'تعديل' : 'إضافة', `تعديل تحليل: ${data.titleAr}`);
                            setEditingItem(null);
                            fetchData();
                          } catch (err: any) {
                            console.error("Supabase Error:", err);
-                           alert(language === 'ar' ? `فشلت العملية: ${err.message}` : `Operation failed: ${err.message}`);
+                           showToast(language === 'ar' ? `فشلت العملية: ${err.message}` : `Operation failed: ${err.message}`, 'error');
                          }
                          return;
                        }

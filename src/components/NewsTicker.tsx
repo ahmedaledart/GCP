@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { supabase } from '../lib/supabase';
 import { useLanguage } from '../context/LanguageContext';
+import { useMarketData } from '../context/MarketContext';
 import { motion, AnimatePresence } from 'motion/react';
 import { Megaphone, Zap } from 'lucide-react';
 
@@ -15,44 +16,21 @@ interface NewsItem {
 
 export const NewsTicker = () => {
   const { language } = useLanguage();
+  const { news: newsData } = useMarketData();
   const [news, setNews] = useState<NewsItem[]>([]);
 
   useEffect(() => {
-    let isMounted = true;
-    const fetchNews = async () => {
-      const { data, error } = await supabase
-        .from('news')
-        .select('*')
-        .eq('status', 'published')
-        .eq('is_visible', true)
-        .order('created_at', { ascending: false });
-        
-      if (!error && data && isMounted) {
-        setNews(data.map(n => ({
-          id: String(n.id),
-          text_ar: n.title_ar || n.content_ar,
-          text_en: n.title_en || n.content_en,
-          is_breaking: n.is_breaking,
-          active: true,
-          createdAt: n.created_at
-        })));
-      }
-    };
-    
-    fetchNews();
-    
-    const subscription = supabase
-      .channel('news-ticker-channel')
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'news' }, () => {
-        fetchNews();
-      })
-      .subscribe();
-
-    return () => {
-      isMounted = false;
-      supabase.removeChannel(subscription);
-    };
-  }, []);
+    if (newsData && newsData.length > 0) {
+      setNews(newsData.map((n: any) => ({
+        id: String(n.id),
+        text_ar: n.title_ar || n.content_ar,
+        text_en: n.title_en || n.content_en,
+        is_breaking: n.is_breaking,
+        active: true,
+        createdAt: n.created_at
+      })));
+    }
+  }, [newsData]);
 
   if (news.length === 0) return null;
 

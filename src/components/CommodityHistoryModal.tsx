@@ -1,0 +1,278 @@
+import React, { useState, useEffect } from 'react';
+import { motion, AnimatePresence } from 'motion/react';
+import { X, TrendingUp, Activity, Info, Calendar } from 'lucide-react';
+import { AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts';
+import { supabase } from '../lib/supabase';
+import { useLanguage } from '../context/LanguageContext';
+import { PriceDisplay } from './PriceDisplay';
+
+interface CommodityHistoryModalProps {
+  commodity: any;
+  onClose: () => void;
+}
+
+export const CommodityHistoryModal: React.FC<CommodityHistoryModalProps> = ({ commodity, onClose }) => {
+  const { t, language } = useLanguage();
+  const [historyData, setHistoryData] = useState<any[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [period, setPeriod] = useState<number | 'all'>(7); // days
+  
+  const [stats, setStats] = useState({
+    firstPrice: 0,
+    lastPrice: 0,
+    highPrice: 0,
+    lowPrice: 0,
+    firstDate: '',
+    lastDate: ''
+  });
+
+  useEffect(() => {
+    const fetchHistory = async () => {
+      setLoading(true);
+      try {
+        let query = supabase
+          .from('commodity_price_history')
+          .select('*')
+          .eq('symbol', commodity.symbol)
+          .order('recorded_at', { ascending: true });
+
+        if (period !== 'all') {
+          const date = new Date();
+          date.setDate(date.getDate() - period);
+          query = query.gte('recorded_at', date.toISOString());
+        }
+
+        const { data, error } = await query;
+
+        if (error) throw error;
+
+        if (data && data.length > 0) {
+          const formattedData = data.map(item => ({
+            ...item,
+            time: new Date(item.recorded_at).toLocaleDateString(language === 'ar' ? 'ar-LY' : 'en-US', {
+              month: 'short',
+              day: 'numeric'
+            })
+          }));
+          setHistoryData(formattedData);
+
+          // Calculate stats
+          const prices = data.map(d => d.price);
+          setStats({
+            firstPrice: data[0].price,
+            lastPrice: data[data.length - 1].price,
+            highPrice: Math.max(...prices),
+            lowPrice: Math.min(...prices),
+            firstDate: data[0].recorded_at,
+            lastDate: data[data.length - 1].recorded_at
+          });
+        } else {
+          setHistoryData([]);
+        }
+      } catch (err) {
+        console.error("Error fetching history:", err);
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    if (commodity) {
+      fetchHistory();
+    }
+  }, [commodity, period, language]);
+
+  const periods = [
+    { label: language === 'ar' ? '7 أيام' : '7 Days', value: 7 },
+    { label: language === 'ar' ? '30 يومًا' : '30 Days', value: 30 },
+    { label: language === 'ar' ? '3 أشهر' : '3 Months', value: 90 },
+    { label: language === 'ar' ? '6 أشهر' : '6 Months', value: 180 },
+    { label: language === 'ar' ? 'سنة' : '1 Year', value: 365 },
+    { label: language === 'ar' ? 'الكل' : 'All', value: 'all' }
+  ];
+
+  if (!commodity) return null;
+
+  const changeVal = stats.lastPrice - stats.firstPrice;
+  const changePct = stats.firstPrice > 0 ? (changeVal / stats.firstPrice) * 100 : 0;
+  const isUp = changeVal >= 0;
+
+  return (
+    <AnimatePresence>
+      <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-black/90 backdrop-blur-md">
+        <motion.div 
+          initial={{ opacity: 0, scale: 0.9, y: 20 }}
+          animate={{ opacity: 1, scale: 1, y: 0 }}
+          exit={{ opacity: 0, scale: 0.9, y: 20 }}
+          className="bg-[#0A1128] border border-[#1C2E5A] rounded-[2.5rem] w-full max-w-5xl max-h-[90vh] overflow-y-auto shadow-2xl relative custom-scrollbar"
+        >
+          <div className="absolute top-0 left-0 w-full h-1.5 bg-gradient-to-r from-transparent via-[#D4AF37] to-transparent"></div>
+          
+          <button 
+            onClick={onClose}
+            className="absolute top-6 right-6 text-gray-400 hover:text-white transition-all z-10 w-12 h-12 flex items-center justify-center bg-[#121E3D] rounded-2xl border border-[#1C2E5A] hover:bg-red-500/10 hover:border-red-500/20"
+          >
+            <X size={24} />
+          </button>
+
+          <div className="p-8 md:p-12">
+            <div className="flex flex-col lg:flex-row justify-between items-start mb-12 gap-10">
+              <div className="flex items-center gap-6">
+                <div className="w-20 h-20 bg-[#D4AF37]/10 rounded-[2rem] flex items-center justify-center border border-[#D4AF37]/20 shadow-inner">
+                  <TrendingUp className="text-[#D4AF37]" size={40} />
+                </div>
+                <div>
+                  <h2 className="text-4xl font-black text-white mb-2 uppercase tracking-tighter">
+                    {language === 'ar' ? commodity.nameAr : commodity.nameEn}
+                  </h2>
+                  <div className="flex items-center gap-3">
+                    <span className="text-[#D4AF37] font-black text-xl tracking-widest">{commodity.symbol}</span>
+                    <span className="px-3 py-1 rounded-xl bg-[#121E3D] text-[10px] uppercase font-black text-[#D4AF37] border border-[#D4AF37]/20">
+                      {language === 'ar' ? commodity.sectorAr : (commodity.sectorEn || commodity.sector)}
+                    </span>
+                  </div>
+                </div>
+              </div>
+
+              <div className="bg-[#121E3D] p-8 rounded-[2rem] border border-[#1C2E5A] w-full lg:w-auto min-w-[280px] shadow-2xl">
+                <div className="text-gray-500 text-[10px] mb-2 uppercase tracking-[0.3em] font-black">{language === 'ar' ? 'السعر الحالي' : 'Current Price'}</div>
+                <div className="flex items-center gap-3" dir="ltr">
+                  <span className="text-3xl text-[#D4AF37] font-black">
+                    {commodity.currency === 'LYD' ? 'د.ل' : commodity.currency === 'EUR' ? '€' : commodity.currency === 'USD' ? '$' : commodity.currency}
+                  </span>
+                  <PriceDisplay price={commodity.price} className="text-5xl font-black text-white tracking-tighter" />
+                </div>
+                <div className={`flex items-center gap-3 mt-4 font-black ${commodity.trend === 'up' ? 'text-green-500' : 'text-red-500'}`}>
+                  <Activity size={20} />
+                  <span className="text-xl tracking-tight">{commodity.trend === 'up' ? '+' : ''}{commodity.changePercent}%</span>
+                  <span className="text-xs opacity-50 font-medium">({commodity.trend === 'up' ? '+' : ''}{commodity.changeValue || commodity.changeAmount})</span>
+                </div>
+              </div>
+            </div>
+
+            {/* Filter */}
+            <div className="flex flex-wrap gap-3 mb-8 bg-[#121E3D]/50 p-2 rounded-2xl border border-[#1C2E5A] w-max max-w-full">
+              {periods.map(p => (
+                <button
+                  key={p.value}
+                  onClick={() => setPeriod(p.value as any)}
+                  className={`px-6 py-3 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all ${period === p.value ? 'bg-[#D4AF37] text-[#0A1128] shadow-lg shadow-[#D4AF37]/20 scale-105' : 'text-gray-500 hover:text-white hover:bg-[#1C2E5A]'}`}
+                >
+                  {p.label}
+                </button>
+              ))}
+            </div>
+
+            {/* Chart Area */}
+            <div className="bg-[#0A1128]/50 rounded-[2.5rem] p-8 border border-[#1C2E5A] mb-10 overflow-hidden relative group">
+               <div className="flex justify-between items-center mb-8">
+                  <h3 className="text-xs font-black text-gray-500 uppercase tracking-[0.3em] flex items-center gap-3">
+                     <div className="w-1.5 h-1.5 rounded-full bg-[#D4AF37] animate-pulse"></div>
+                     {language === 'ar' ? 'المسار الزمني لحركة السعر' : 'Price Timeline Analysis'}
+                  </h3>
+               </div>
+               
+               {loading ? (
+                 <div className="h-80 md:h-[400px] w-full flex items-center justify-center">
+                    <div className="relative">
+                      <div className="w-16 h-16 border-4 border-[#1C2E5A] border-t-[#D4AF37] rounded-full animate-spin"></div>
+                      <div className="absolute inset-0 flex items-center justify-center">
+                         <div className="w-8 h-8 bg-[#121E3D] rounded-full"></div>
+                      </div>
+                    </div>
+                 </div>
+               ) : historyData.length < 2 ? (
+                 <div className="h-80 md:h-[400px] w-full flex flex-col items-center justify-center gap-4">
+                    <Activity size={48} className="text-gray-700 animate-pulse" />
+                    <p className="text-gray-500 font-bold text-center max-w-xs">
+                      {language === 'ar' ? 'لا توجد بيانات تاريخية كافية لهذه السلعة' : 'Not enough historical data for this commodity'}
+                    </p>
+                 </div>
+               ) : (
+                 <div className="h-80 md:h-[400px] w-full" dir="ltr">
+                    <ResponsiveContainer width="100%" height="100%">
+                       <AreaChart data={historyData}>
+                          <defs>
+                             <linearGradient id="colorPrice" x1="0" y1="0" x2="0" y2="1">
+                                <stop offset="5%" stopColor={isUp ? '#10B981' : '#EF4444'} stopOpacity={0.2}/>
+                                <stop offset="95%" stopColor={isUp ? '#10B981' : '#EF4444'} stopOpacity={0}/>
+                             </linearGradient>
+                          </defs>
+                          <CartesianGrid strokeDasharray="3 3" stroke="#1C2E5A" vertical={false} opacity={0.3} />
+                          <XAxis 
+                            dataKey="time" 
+                            stroke="#4B5563" 
+                            fontSize={10} 
+                            tickMargin={15} 
+                            axisLine={false}
+                            tickLine={false}
+                            fontFamily="monospace"
+                          />
+                          <YAxis 
+                            dataKey="price"
+                            stroke="#4B5563" 
+                            fontSize={10} 
+                            domain={['auto', 'auto']}
+                            tickFormatter={(val) => val.toLocaleString()}
+                            axisLine={false}
+                            tickLine={false}
+                            fontFamily="monospace"
+                          />
+                          <Tooltip 
+                             contentStyle={{ 
+                               backgroundColor: '#121E3D', 
+                               borderColor: '#1C2E5A', 
+                               borderRadius: '16px',
+                               boxShadow: '0 20px 25px -5px rgba(0, 0, 0, 0.5)',
+                               borderWidth: '2px'
+                             }}
+                             itemStyle={{ color: '#fff', fontWeight: 'bold' }}
+                             labelStyle={{ color: '#D4AF37', fontWeight: 'black', marginBottom: '8px', fontSize: '10px', textTransform: 'uppercase', letterSpacing: '0.1em' }}
+                          />
+                          <Area 
+                             type="monotone" 
+                             dataKey="price" 
+                             stroke={isUp ? '#10B981' : '#EF4444'} 
+                             fillOpacity={1} 
+                             fill="url(#colorPrice)" 
+                             strokeWidth={4}
+                             animationDuration={1500}
+                             dot={{ fill: isUp ? '#10B981' : '#EF4444', strokeWidth: 2, r: 0 }}
+                             activeDot={{ r: 6, strokeWidth: 0, fill: '#D4AF37 shadow-lg shadow-[#D4AF37]' }}
+                          />
+                       </AreaChart>
+                    </ResponsiveContainer>
+                 </div>
+               )}
+            </div>
+
+            {/* Stats Grid */}
+            {!loading && historyData.length > 0 && (
+              <div className="grid grid-cols-2 md:grid-cols-4 gap-6">
+                 {[
+                    { label: language === 'ar' ? 'أول سعر مسجل' : 'Initial Price', value: stats.firstPrice.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 }), icon: <TrendingUp size={14} /> },
+                    { label: language === 'ar' ? 'آخر سعر مسجل' : 'Closing Price', value: stats.lastPrice.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 }), icon: <Activity size={14} /> },
+                    { label: language === 'ar' ? 'أعلى قمة تاريخية' : 'All-time High', value: stats.highPrice.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 }), color: 'text-green-500' },
+                    { label: language === 'ar' ? 'أدنى قاع تاريخي' : 'All-time Low', value: stats.lowPrice.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 }), color: 'text-red-500' },
+                    { label: language === 'ar' ? 'صافي التغير' : 'Net Change', value: `${changeVal >= 0 ? '+' : ''}${changeVal.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`, color: changeVal >= 0 ? 'text-green-500' : 'text-red-500' },
+                    { label: language === 'ar' ? 'نسبة التغير الكلية' : 'Historic Growth %', value: `${changePct >= 0 ? '+' : ''}${changePct.toFixed(2)}%`, color: changePct >= 0 ? 'text-green-500' : 'text-red-500' },
+                    { label: language === 'ar' ? 'تاريخ أول قراءة' : 'Since Date', value: new Date(stats.firstDate).toLocaleDateString(language === 'ar' ? 'ar-LY' : 'en-US', { year: 'numeric', month: 'long', day: 'numeric' }) },
+                    { label: language === 'ar' ? 'آخر تحديث للبيانات' : 'Last Updated On', value: new Date(stats.lastDate).toLocaleDateString(language === 'ar' ? 'ar-LY' : 'en-US', { year: 'numeric', month: 'long', day: 'numeric' }) }
+                 ].map((stat, i) => (
+                    <div key={i} className="bg-[#121E3D] border border-[#1C2E5A] p-6 rounded-2xl flex flex-col justify-between group hover:border-[#D4AF37]/30 transition-all shadow-xl shadow-black/20">
+                       <div className="flex items-center justify-between mb-4">
+                          <div className="text-[9px] text-gray-500 uppercase tracking-widest font-black leading-tight max-w-[80px]">{stat.label}</div>
+                          <div className="w-6 h-6 bg-[#0A1128] rounded-lg border border-[#1C2E5A] flex items-center justify-center text-[#D4AF37] group-hover:scale-110 transition-transform">
+                             {stat.icon || <Calendar size={12} />}
+                          </div>
+                       </div>
+                       <div className={`text-xl font-black ${stat.color || 'text-white'} tracking-tight`}>{stat.value}</div>
+                    </div>
+                 ))}
+              </div>
+            )}
+          </div>
+        </motion.div>
+      </div>
+    </AnimatePresence>
+  );
+};

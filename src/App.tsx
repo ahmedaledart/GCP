@@ -1,5 +1,5 @@
 import React from 'react';
-import { Routes, Route, useLocation } from 'react-router-dom';
+import { Routes, Route, useLocation, Navigate, useNavigate } from 'react-router-dom';
 import { ShieldAlert } from 'lucide-react';
 import { Header } from './components/Header';
 import { Footer } from './components/Footer';
@@ -23,7 +23,42 @@ import { MarketProvider } from './context/MarketContext';
 import { AuthProvider } from './context/AuthContext';
 import { Auth } from './pages/Auth';
 
+class AppErrorBoundary extends React.Component<{children: React.ReactNode}, {hasError: boolean, error: Error | null}> {
+  constructor(props: any) {
+    super(props);
+    this.state = { hasError: false, error: null };
+  }
+  static getDerivedStateFromError(error: any) {
+    return { hasError: true, error };
+  }
+  componentDidCatch(error: any, errorInfo: any) {
+    console.error("App Error Boundary caught an error:", error, errorInfo);
+  }
+  render() {
+    if (this.state.hasError) {
+      return (
+        <div className="min-h-screen bg-gray-50 flex flex-col items-center justify-center p-4">
+          <div className="bg-white border p-12 rounded-[2rem] max-w-lg w-full text-center shadow-xl relative overflow-hidden">
+            <h2 className="text-2xl font-black text-gray-800 mb-4 uppercase tracking-tighter">Oops, something went wrong</h2>
+            <p className="text-gray-500 text-sm mb-8 p-4 bg-gray-100 rounded-xl border border-gray-200 font-mono break-all text-left overflow-auto max-h-48">
+              {this.state.error?.toString()}
+            </p>
+            <button 
+              onClick={() => { window.location.href = '/'; }} 
+              className="bg-black hover:bg-gray-800 text-white px-8 py-3 rounded-xl font-bold uppercase text-sm transition-all"
+            >
+              Return Home
+            </button>
+          </div>
+        </div>
+      );
+    }
+    return this.props.children;
+  }
+}
+
 const MaintenanceMode = () => {
+
   const { settings } = useSettings();
   const { language } = useLanguage();
   return (
@@ -57,6 +92,7 @@ const AppRoutes = () => {
       <Route path="/" element={<Home />} />
       <Route path="/markets" element={<Markets />} />
       <Route path="/analytics" element={<Analytics />} />
+      <Route path="/analysis" element={<Analytics />} />
       <Route path="/news" element={<News />} />
       <Route path="/reports" element={<Reports />} />
       <Route path="/contact" element={<Contact />} />
@@ -67,9 +103,30 @@ const AppRoutes = () => {
       <Route path="/services" element={<Services />} />
       <Route path="/auth" element={<Auth />} />
       <Route path={formattedPath} element={<Admin />} />
+      <Route path="/admin/login" element={<Admin />} />
+      <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>
   );
 };
+
+function ForceRedirectOnRefresh() {
+  const location = useLocation();
+  const navigate = useNavigate();
+
+  React.useEffect(() => {
+    const isReload = 
+      (window.performance && window.performance.navigation && window.performance.navigation.type === 1) ||
+      (window.performance && window.performance.getEntriesByType && (window.performance.getEntriesByType("navigation")[0] as any)?.type === 'reload');
+
+    if (isReload) {
+      if (!location.pathname.startsWith('/admin') && location.pathname !== '/reports' && location.pathname !== '/analytics' && location.pathname !== '/') {
+        navigate('/', { replace: true });
+      }
+    }
+  }, []);
+
+  return null;
+}
 
 function AppContent() {
   const { settings, loading } = useSettings();
@@ -91,6 +148,7 @@ function AppContent() {
 
   return (
     <div className="min-h-screen bg-[#050A18] flex flex-col">
+      <ForceRedirectOnRefresh />
       {isSiteClosed && !isNotOnAdminPath && (
         <div className="bg-red-500 text-white text-center py-2 text-sm font-bold shadow-lg z-50">
           تنبيه: المنصة مغلقة حالياً للزوار (تحت الصيانة)
@@ -109,17 +167,19 @@ function AppContent() {
 
 function App() {
   return (
-    <SettingsProvider>
-      <LanguageProvider>
-        <AuthProvider>
-          <MarketProvider>
-            <VisitorTracker />
-            <ScrollToTop />
-            <AppContent />
-          </MarketProvider>
-        </AuthProvider>
-      </LanguageProvider>
-    </SettingsProvider>
+    <AppErrorBoundary>
+      <SettingsProvider>
+        <LanguageProvider>
+          <AuthProvider>
+            <MarketProvider>
+              <VisitorTracker />
+              <ScrollToTop />
+              <AppContent />
+            </MarketProvider>
+          </AuthProvider>
+        </LanguageProvider>
+      </SettingsProvider>
+    </AppErrorBoundary>
   );
 }
 
