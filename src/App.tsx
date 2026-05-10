@@ -22,6 +22,8 @@ import { SettingsProvider, useSettings } from './context/SettingsContext';
 import { MarketProvider } from './context/MarketContext';
 import { AuthProvider } from './context/AuthContext';
 import { Auth } from './pages/Auth';
+import { hasSupabaseConfig } from './lib/supabase';
+import { AlertCircle, PlusCircle } from 'lucide-react';
 
 class AppErrorBoundary extends React.Component<{children: React.ReactNode}, {hasError: boolean, error: Error | null}> {
   constructor(props: any) {
@@ -166,6 +168,29 @@ function AppContent() {
 }
 
 function App() {
+  if (!hasSupabaseConfig) {
+    return (
+      <div className="min-h-screen bg-[#050A18] flex flex-col items-center justify-center p-4">
+        <div className="bg-[#121E3D] border border-red-500/30 p-12 rounded-[2rem] max-w-lg w-full text-center shadow-2xl relative overflow-hidden">
+          <div className="w-20 h-20 bg-red-500/20 text-red-500 rounded-3xl flex items-center justify-center mx-auto mb-6">
+            <AlertCircle size={40} />
+          </div>
+          <h2 className="text-2xl font-black text-white mb-4 uppercase tracking-tighter">Missing Environment Variables</h2>
+          <p className="text-gray-400 text-sm mb-6 leading-relaxed">
+            The application cannot connect to Supabase because the required environment variables are missing.
+          </p>
+          <div className="bg-[#0A1128] border border-[#1C2E5A] rounded-xl p-6 text-left mb-8">
+            <p className="text-xs font-bold text-gray-500 uppercase tracking-widest mb-3">Please add the following to your .env file:</p>
+            <code className="block text-sm text-[#D4AF37] font-mono whitespace-pre">
+              VITE_SUPABASE_URL=your_url<br/>
+              VITE_SUPABASE_ANON_KEY=your_key
+            </code>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <AppErrorBoundary>
       <SettingsProvider>
