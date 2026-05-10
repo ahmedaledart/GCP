@@ -64,7 +64,11 @@ export const Header = () => {
 
     const sub = supabase.channel('notifs').on('postgres_changes', { event: '*', schema: 'public', table: 'notifications', filter: `userId=eq.${user.id}` }, () => {
       fetchNotifications();
-    }).subscribe();
+    }).subscribe((status) => {
+      if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT') {
+        console.warn('Realtime unavailable, using normal Supabase fetch');
+      }
+    });
 
     return () => { supabase.removeChannel(sub); };
   }, [user]);

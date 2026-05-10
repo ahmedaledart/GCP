@@ -20,7 +20,11 @@ export const SectorsTab = () => {
     fetchSectors();
     const sub = supabase.channel('sectors_changes').on('postgres_changes', { event: '*', schema: 'public', table: 'sectors' }, () => {
       fetchSectors();
-    }).subscribe();
+    }).subscribe((status) => {
+      if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT') {
+        console.warn('Realtime unavailable, using normal Supabase fetch');
+      }
+    });
     return () => { supabase.removeChannel(sub); };
   }, []);
 

@@ -31,6 +31,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         const { data: { session }, error } = await supabase.auth.getSession();
         if (error) {
           console.warn('Session error:', error.message);
+          try { await supabase.auth.signOut(); } catch (e) {}
         }
         
         const currentUser = session?.user ?? null;
@@ -43,6 +44,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         }
       } catch (err) {
         console.error('Auth initialization error:', err);
+        try { await supabase.auth.signOut(); } catch (e) {}
         setUser(null);
         setPlatformUser(null);
       } finally {

@@ -125,7 +125,11 @@ export const SettingsProvider: React.FC<{ children: React.ReactNode }> = ({ chil
       .on('postgres_changes', { event: '*', schema: 'public', table: 'platform_settings' }, () => {
         fetchAllSettings();
       })
-      .subscribe();
+      .subscribe((status) => {
+        if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT') {
+          console.warn('Realtime unavailable, using normal Supabase fetch');
+        }
+      });
 
     return () => {
       isMounted = false;

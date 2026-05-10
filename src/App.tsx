@@ -39,17 +39,21 @@ class AppErrorBoundary extends React.Component<{children: React.ReactNode}, {has
   render() {
     if (this.state.hasError) {
       return (
-        <div className="min-h-screen bg-gray-50 flex flex-col items-center justify-center p-4">
-          <div className="bg-white border p-12 rounded-[2rem] max-w-lg w-full text-center shadow-xl relative overflow-hidden">
-            <h2 className="text-2xl font-black text-gray-800 mb-4 uppercase tracking-tighter">Oops, something went wrong</h2>
-            <p className="text-gray-500 text-sm mb-8 p-4 bg-gray-100 rounded-xl border border-gray-200 font-mono break-all text-left overflow-auto max-h-48">
+        <div className="min-h-screen bg-[#050A18] flex flex-col items-center justify-center p-4">
+          <div className="bg-[#121E3D] border border-red-500/30 p-12 rounded-[2rem] max-w-lg w-full text-center shadow-xl relative overflow-hidden">
+            <h2 className="text-2xl font-black text-white mb-4 uppercase tracking-tighter" dir="rtl">تم رصد نسخة قديمة من التطبيق يرجى تحديث الصفحة</h2>
+            <p className="text-gray-400 text-sm mb-8 font-mono break-all text-left overflow-auto max-h-48 whitespace-pre-wrap">
               {this.state.error?.toString()}
             </p>
             <button 
-              onClick={() => { window.location.href = '/'; }} 
-              className="bg-black hover:bg-gray-800 text-white px-8 py-3 rounded-xl font-bold uppercase text-sm transition-all"
+              onClick={() => { 
+                localStorage.clear();
+                sessionStorage.clear();
+                window.location.reload(); 
+              }} 
+              className="bg-red-600 hover:bg-red-700 text-white px-8 py-3 rounded-xl font-bold uppercase text-sm transition-all shadow-lg"
             >
-              Return Home
+              تحديث التطبيق
             </button>
           </div>
         </div>
@@ -57,6 +61,35 @@ class AppErrorBoundary extends React.Component<{children: React.ReactNode}, {has
     }
     return this.props.children;
   }
+}
+
+const APP_VERSION = '2026-05-10-01';
+
+function AppVersionCheck() {
+  React.useEffect(() => {
+    try {
+      const currentVersion = localStorage.getItem('APP_VERSION');
+      if (currentVersion !== APP_VERSION) {
+        console.log(`Upgrading app version from ${currentVersion} to ${APP_VERSION}`);
+        
+        // Keep essential info if necessary, clear the rest
+        const keysToKeep = ['APP_VERSION'];
+        Object.keys(localStorage).forEach(key => {
+          if (!keysToKeep.includes(key)) {
+              localStorage.removeItem(key);
+          }
+        });
+        sessionStorage.clear();
+        
+        localStorage.setItem('APP_VERSION', APP_VERSION);
+        window.location.reload();
+      }
+    } catch (e) {
+      console.warn("Could not check/update APP_VERSION", e);
+    }
+  }, []);
+
+  return null;
 }
 
 const MaintenanceMode = () => {
@@ -170,6 +203,7 @@ function AppContent() {
 function App() {
   return (
     <AppErrorBoundary>
+      <AppVersionCheck />
       <SettingsProvider>
         <LanguageProvider>
           <AuthProvider>

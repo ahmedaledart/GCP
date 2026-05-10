@@ -192,17 +192,23 @@ export const MarketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     fetchAnalyses();
     // fetchHistory(); // Don't fetch all history by default, wait for requests or just let it be empty
 
-    // Subscriptions
-    commoditySubscription = supabase.channel('commodities-realtime').on('postgres_changes', { event: '*', schema: 'public', table: 'commodities' }, () => fetchCommodities()).subscribe();
-    sectorSubscription = supabase.channel('sectors-realtime').on('postgres_changes', { event: '*', schema: 'public', table: 'sectors' }, () => fetchCommodities()).subscribe();
-    newsSubscription = supabase.channel('news-realtime').on('postgres_changes', { event: '*', schema: 'public', table: 'news' }, () => fetchNews()).subscribe();
-    analysesSubscription = supabase.channel('analyses-realtime').on('postgres_changes', { event: '*', schema: 'public', table: 'analyses' }, () => fetchAnalyses()).subscribe();
+    // Subscriptions with robust fallback
+    const handleSubscribe = (status: string) => {
+      if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT') {
+        console.warn('Realtime unavailable, using normal Supabase fetch');
+      }
+    };
+
+    commoditySubscription = supabase.channel('commodities-realtime').on('postgres_changes', { event: '*', schema: 'public', table: 'commodities' }, () => fetchCommodities()).subscribe(handleSubscribe);
+    sectorSubscription = supabase.channel('sectors-realtime').on('postgres_changes', { event: '*', schema: 'public', table: 'sectors' }, () => fetchCommodities()).subscribe(handleSubscribe);
+    newsSubscription = supabase.channel('news-realtime').on('postgres_changes', { event: '*', schema: 'public', table: 'news' }, () => fetchNews()).subscribe(handleSubscribe);
+    analysesSubscription = supabase.channel('analyses-realtime').on('postgres_changes', { event: '*', schema: 'public', table: 'analyses' }, () => fetchAnalyses()).subscribe(handleSubscribe);
     historySubscription = supabase.channel('history-realtime').on('postgres_changes', { event: '*', schema: 'public', table: 'commodity_price_history' }, () => {
       // Re-fetch current history if it exists
       if (historySymbolRef.current) {
         fetchHistory(historySymbolRef.current);
       }
-    }).subscribe();
+    }).subscribe(handleSubscribe);
 
     return () => {
       isMounted = false;

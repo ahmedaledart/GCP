@@ -41,23 +41,7 @@ app.post("/api/db", (req, res) => {
   }
 });
 
-app.get("/api/db/stream", (req, res) => {
-  res.writeHead(200, {
-    'Content-Type': 'text/event-stream',
-    'Cache-Control': 'no-cache',
-    'Connection': 'keep-alive'
-  });
-  
-  const sendUpdate = () => {
-    res.write('data: update\n\n');
-  };
-  
-  dbEvents.on('update', sendUpdate);
-  
-  req.on('close', () => {
-    dbEvents.off('update', sendUpdate);
-  });
-});
+// API db stream removed for GitHub Pages compatibility
 
 // --- API Price Update Implementation ---
 

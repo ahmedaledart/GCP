@@ -51,7 +51,11 @@ export const ArchiveTab = () => {
       .on('postgres_changes', { event: '*', schema: 'public', table: 'commodity_price_history' }, () => {
         fetchArchive();
       })
-      .subscribe();
+      .subscribe((status) => {
+        if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT') {
+          console.warn('Realtime unavailable, using normal Supabase fetch');
+        }
+      });
 
     return () => {
       supabase.removeChannel(channel);

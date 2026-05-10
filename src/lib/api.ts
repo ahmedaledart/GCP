@@ -75,12 +75,7 @@ const fetchDB = async () => {
 };
 fetchDB.promise = null as Promise<any> | null;
 
-if (typeof window !== 'undefined') {
-  const setupSSE = () => {
-    console.warn('Realtime via /api/db/stream unavailable, using normal Supabase fetch');
-  };
-  setupSSE();
-}
+
 
 const saveDB = async (data: any) => {
   console.log('Dummy saveDB', data);

@@ -136,7 +136,11 @@ const AdminInner = () => {
       supabase.channel('admin-settings').on('postgres_changes', { event: '*', schema: 'public', table: 'platform_settings' }, () => fetchData())
     ];
 
-    channels.forEach(channel => channel.subscribe());
+    channels.forEach(channel => channel.subscribe((status) => {
+      if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT') {
+        console.warn('Realtime unavailable, using normal Supabase fetch');
+      }
+    }));
 
     return () => {
       channels.forEach(channel => supabase.removeChannel(channel));
@@ -452,7 +456,11 @@ const AdminInner = () => {
           console.log('Realtime update: logs', payload);
           fetchData();
       })
-      .subscribe();
+      .subscribe((status) => {
+        if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT') {
+          console.warn('Realtime unavailable, using normal Supabase fetch');
+        }
+      });
 
     return () => {
       supabase.removeChannel(channel);
