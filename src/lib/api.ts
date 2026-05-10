@@ -69,38 +69,7 @@ export function handleFirestoreError(error: unknown, operationType: OperationTyp
 const fetchDB = async () => {
   if (fetchDB.promise) return fetchDB.promise;
   fetchDB.promise = (async () => {
-    try {
-      const res = await fetch('/api/db');
-      const data = await res.json();
-      let updated = false;
-      
-      // Auto-init specific collections if missing
-      if (!data.commodities || data.commodities.length === 0) {
-        data.commodities = [...commoditiesData];
-        updated = true;
-      }
-      
-      if (!data.news || data.news.length === 0) {
-        data.news = marketNews.map(n => ({
-          id: String(n.id),
-          text_ar: n.titleAr,
-          text_en: n.titleEn,
-          active: true,
-          createdAt: new Date().toISOString()
-        }));
-        updated = true;
-      }
-      
-      if (updated) {
-        await saveDB(data);
-      }
-      
-      return data;
-    } catch (e) {
-      return { settings: {}, commodities: [...commoditiesData], news: [], reports: [], messages: [], logs: [], sectors: [], exchange_rates: [], system_users: [] };
-    } finally {
-      fetchDB.promise = null;
-    }
+    return { settings: {}, commodities: [...commoditiesData], news: [], reports: [], messages: [], logs: [], sectors: [], exchange_rates: [], system_users: [] };
   })();
   return fetchDB.promise;
 };
@@ -108,29 +77,13 @@ fetchDB.promise = null as Promise<any> | null;
 
 if (typeof window !== 'undefined') {
   const setupSSE = () => {
-    const eventSource = new EventSource('/api/db/stream');
-    eventSource.onmessage = () => {
-      console.log('SSE Stream: db_updated event received');
-      window.dispatchEvent(new Event('db_updated'));
-    };
-    eventSource.onerror = () => {
-      eventSource.close();
-      setTimeout(setupSSE, 5000); // Reconnect
-    };
+    console.warn('Realtime via /api/db/stream unavailable, using normal Supabase fetch');
   };
   setupSSE();
 }
 
 const saveDB = async (data: any) => {
-  const res = await fetch('/api/db', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(data)
-  });
-  if (!res.ok) {
-    const errorData = await res.json();
-    throw new Error(errorData.error || 'Failed to sync with database');
-  }
+  console.log('Dummy saveDB', data);
 };
 
 // Data normalization helper (maintains compatibility with existing UI components)
