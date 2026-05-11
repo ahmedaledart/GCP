@@ -652,15 +652,32 @@ const AdminInner = () => {
     const { file } = importConfig;
     if (!file) return;
 
-    const reader = new FileReader();
-    reader.onload = async (evt) => {
+    const isCsvTab = activeTab === 'import_csv';
+    const isExcelFile = file.name.endsWith('.xlsx') || file.name.endsWith('.xls');
+    const isCsvFile = file.name.endsWith('.csv');
+
+    if (isCsvTab && isExcelFile) {
+      setImportFeedback({
+        message: language === 'ar' 
+          ? 'الملف المرفوع بصيغة Excel، يرجى استخدام زر استيراد Excel أو حفظ الملف بصيغة CSV UTF-8.'
+          : 'File uploaded is Excel format. Please use the Import Excel button or save the file as CSV UTF-8.',
+        errors: [language === 'ar' ? 'صيغة ملف غير صالحة في تبويب CSV.' : 'Invalid file format for CSV tab.']
+      });
+      return;
+    }
+
+    if (!isCsvTab && isCsvFile) {
+      setImportFeedback({
+        message: language === 'ar' 
+          ? 'الملف المرفوع بصيغة CSV، يرجى استخدام زر استيراد CSV.'
+          : 'File uploaded is CSV format. Please use the Import CSV button.',
+        errors: [language === 'ar' ? 'صيغة ملف غير صالحة في تبويب الإكسل.' : 'Invalid file format for Excel tab.']
+      });
+      return;
+    }
+
+    const parseData = async (rawRows: any[]) => {
       try {
-        const bstr = evt.target?.result;
-        const wb = XLSX.read(bstr, { type: 'array' });
-        const wsname = wb.SheetNames[0];
-        const ws = wb.Sheets[wsname];
-        const rawRows = XLSX.utils.sheet_to_json(ws);
-        
         console.log("rawRows:", rawRows);
 
         // Fetch valid sector codes
@@ -813,7 +830,74 @@ const AdminInner = () => {
         });
       }
     };
-    reader.readAsArrayBuffer(file);
+
+    const reader = new FileReader();
+    
+    if (isExcelFile) {
+      reader.onload = async (evt) => {
+        try {
+          const bstr = evt.target?.result;
+          const wb = XLSX.read(bstr, { type: 'array' });
+          const wsname = wb.SheetNames[0];
+          const ws = wb.Sheets[wsname];
+          const rawRows = XLSX.utils.sheet_to_json(ws);
+          await parseData(rawRows);
+        } catch (err: any) {
+          console.error("Excel Read Exception:", err);
+          setImportFeedback({ 
+            message: language === 'ar' ? `حدث خطأ: ${err.message}` : `Error: ${err.message}`,
+            errors: [err.message]
+          });
+        }
+      };
+      reader.readAsArrayBuffer(file);
+    } else if (isCsvFile) {
+      reader.onload = async (evt) => {
+        try {
+          const text = evt.target?.result as string;
+          const rows: any[] = [];
+          const lines = text.split(/\r?\n/).filter(l => l.trim().length > 0);
+          if (lines.length > 0) {
+            // Basic CSV parser to handle simple quotes
+            const splitCsvLine = (line: string) => {
+              const res = [];
+              let cur = '';
+              let inQuote = false;
+              for (let i = 0; i < line.length; i++) {
+                if (line[i] === '"') {
+                  inQuote = !inQuote;
+                } else if (line[i] === ',' && !inQuote) {
+                  res.push(cur.trim());
+                  cur = '';
+                } else {
+                  cur += line[i];
+                }
+              }
+              res.push(cur.trim());
+              return res;
+            };
+
+            const headers = splitCsvLine(lines[0]).map(h => h.replace(/^"|"$/g, '').trim());
+            for (let i = 1; i < lines.length; i++) {
+              const values = splitCsvLine(lines[i]).map(v => v.replace(/^"|"$/g, '').trim());
+              const rowObj: any = {};
+              headers.forEach((h, idx) => {
+                rowObj[h] = values[idx];
+              });
+              rows.push(rowObj);
+            }
+          }
+          await parseData(rows);
+        } catch (err: any) {
+          console.error("CSV Read Exception:", err);
+          setImportFeedback({ 
+            message: language === 'ar' ? `حدث خطأ: ${err.message}` : `Error: ${err.message}`,
+            errors: [err.message]
+          });
+        }
+      };
+      reader.readAsText(file, 'utf-8');
+    }
   };
 
   // Chart Data Processing
@@ -1073,6 +1157,7 @@ const AdminInner = () => {
             {(adminUser?.role === 'super_admin' || adminUser?.permissions?.includes('commodities')) && (
               <>
                 <NavItem active={activeTab === 'import_csv'} icon={<FileSpreadsheet />} label={language === 'ar' ? 'استيراد CSV' : 'Import CSV'} onClick={() => { setActiveTab('import_csv'); setIsMobileMenuOpen(false); }} language={language} />
+                <NavItem active={activeTab === 'import_excel'} icon={<FileSpreadsheet />} label={language === 'ar' ? 'استيراد Excel' : 'Import Excel'} onClick={() => { setActiveTab('import_excel'); setIsMobileMenuOpen(false); }} language={language} />
                 <NavItem active={activeTab === 'api_sources'} icon={<Database />} label={language === 'ar' ? 'مصادر البيانات API' : 'Price Data API'} onClick={() => { setActiveTab('api_sources'); setIsMobileMenuOpen(false); }} language={language} />
               </>
             )}
@@ -1181,12 +1266,20 @@ const AdminInner = () => {
                         <option value="visible">{language === 'ar' ? 'مرئي' : 'Visible'}</option>
                         <option value="hidden">{language === 'ar' ? 'مخفي' : 'Hidden'}</option>
                       </select>
-                      <button 
-                         onClick={() => setActiveTab('import_csv')}
-                         className="flex items-center gap-2 bg-[#1C2E5A] text-white px-5 py-3 rounded-xl font-black hover:bg-[#25396D] transition-all cursor-pointer text-[10px] uppercase tracking-widest border border-[#2A4075]"
-                       >
-                         <FileSpreadsheet size={18} /> {t('importExcel')}
-                      </button>
+                      <div className="flex gap-2">
+                        <button 
+                           onClick={() => setActiveTab('import_csv')}
+                           className="flex items-center gap-2 bg-[#1C2E5A] text-white px-5 py-3 rounded-xl font-black hover:bg-[#25396D] transition-all cursor-pointer text-[10px] uppercase tracking-widest border border-[#2A4075]"
+                         >
+                           <FileSpreadsheet size={18} /> {language === 'ar' ? 'استيراد CSV' : 'Import CSV'}
+                        </button>
+                        <button 
+                           onClick={() => setActiveTab('import_excel')}
+                           className="flex items-center gap-2 bg-[#175C34] text-white px-5 py-3 rounded-xl font-black hover:bg-[#1C7342] transition-all cursor-pointer text-[10px] uppercase tracking-widest border border-[#1B5733]"
+                         >
+                           <FileSpreadsheet size={18} /> {language === 'ar' ? 'استيراد Excel' : 'Import Excel'}
+                        </button>
+                      </div>
                       <button 
                         onClick={() => setEditingItem({ 
                           type: 'commodity', 
@@ -1579,13 +1672,13 @@ const AdminInner = () => {
                   </div>
                 </div>
               )}
-              {activeTab === 'import_csv' && (
+              { (activeTab === 'import_csv' || activeTab === 'import_excel') && (
                 <div className="bg-[#0A1128] p-10 rounded-3xl border border-[#1C2E5A] shadow-2xl relative overflow-hidden">
                    <div className="absolute top-0 left-0 w-full h-1 bg-gradient-to-r from-transparent via-[#D4AF37]/50 to-transparent"></div>
                     <h3 className="text-2xl font-black mb-10 flex items-center justify-between text-white uppercase tracking-tighter">
                       <div className="flex items-center gap-4">
                         <FileSpreadsheet className="text-[#D4AF37]" size={28} />
-                        {language === 'ar' ? 'استيراد السلع والأسعار عبر ملف إكسل' : 'Import Commodities via Excel'}
+                        {language === 'ar' ? `استيراد السلع والأسعار عبر ملف ${activeTab === 'import_csv' ? 'CSV' : 'إكسل'}` : `Import Commodities via ${activeTab === 'import_csv' ? 'CSV' : 'Excel'}`}
                       </div>
                       <button 
                         onClick={downloadCSVTemplate}
@@ -1602,7 +1695,7 @@ const AdminInner = () => {
                            <FileSpreadsheet size={32} className="text-[#D4AF37]" />
                         </div>
                         <h4 className="text-xl font-black text-white uppercase tracking-tight mb-2">
-                           {language === 'ar' ? 'قم برفع ملف Excel أو CSV' : 'Upload Excel or CSV file'}
+                           {language === 'ar' ? `قم برفع ملف ${activeTab === 'import_csv' ? 'CSV' : 'Excel'}` : `Upload ${activeTab === 'import_csv' ? 'CSV' : 'Excel'} file`}
                         </h4>
                         <p className="text-gray-500 font-bold text-sm mb-8">
                           {language === 'ar' ? 'يجب أن يحتوي الملف على الأعمدة (مطلوب: symbol, name_ar, sector, price)' : 'File should contain columns (required: symbol, name_ar, sector, price)'}
@@ -1635,8 +1728,8 @@ const AdminInner = () => {
                         
                         <p className="text-gray-400 text-sm mb-6">
                           {language === 'ar' 
-                            ? 'يرجى التأكد من أن ملف الإكسل يحتوي على الأعمدة المطلوبة. سيتم التحقق من الرموز والقطاعات قبل الحفظ.' 
-                            : 'Please ensure your Excel file contains the required columns. Symbols and sectors will be validated before saving.'}
+                            ? `يرجى التأكد من أن ملف الـ ${activeTab === 'import_csv' ? 'CSV' : 'إكسل'} يحتوي على الأعمدة المطلوبة. سيتم التحقق من الرموز والقطاعات قبل الحفظ.` 
+                            : `Please ensure your ${activeTab === 'import_csv' ? 'CSV' : 'Excel'} file contains the required columns. Symbols and sectors will be validated before saving.`}
                         </p>
                         
                         <div className="bg-[#0A1128] p-6 rounded-2xl border border-[#1C2E5A] space-y-4">

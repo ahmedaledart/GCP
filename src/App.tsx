@@ -51,10 +51,11 @@ const AppVersionCheck: React.FC<{children: React.ReactNode}> = ({ children }) =>
           </p>
           <button 
             onClick={() => { 
-              localStorage.clear();
-              sessionStorage.clear();
+              if (typeof (window as any).resetAppStorage === 'function') {
+                (window as any).resetAppStorage();
+              }
               localStorage.setItem('APP_VERSION', APP_VERSION);
-              window.location.reload(); 
+              window.location.href = window.location.pathname + '#/'; 
             }} 
             className="bg-red-600 hover:bg-red-700 text-white px-8 py-3 rounded-xl font-bold uppercase text-sm transition-all shadow-lg"
           >
@@ -84,19 +85,23 @@ class AppErrorBoundary extends React.Component<{children: React.ReactNode}, {has
       return (
         <div className="min-h-screen bg-[#050A18] flex flex-col items-center justify-center p-4">
           <div className="bg-[#121E3D] border border-red-500/30 p-12 rounded-[2rem] max-w-lg w-full text-center shadow-xl relative overflow-hidden">
-            <h2 className="text-2xl font-black text-white mb-4 uppercase tracking-tighter" dir="rtl">تم رصد نسخة قديمة من التطبيق يرجى تحديث الصفحة</h2>
+            <h2 className="text-2xl font-black text-white mb-4 uppercase tracking-tighter" dir="rtl">حدث خطأ في المنصة</h2>
             <p className="text-gray-400 text-sm mb-8 font-mono break-all text-left overflow-auto max-h-48 whitespace-pre-wrap">
               {this.state.error?.toString()}
             </p>
             <button 
               onClick={() => { 
-                localStorage.clear();
-                sessionStorage.clear();
-                window.location.reload(); 
+                if (typeof (window as any).resetAppStorage === 'function') {
+                  (window as any).resetAppStorage();
+                } else {
+                  localStorage.clear();
+                  sessionStorage.clear();
+                }
+                window.location.href = window.location.pathname + '#/'; 
               }} 
               className="bg-red-600 hover:bg-red-700 text-white px-8 py-3 rounded-xl font-bold uppercase text-sm transition-all shadow-lg"
             >
-              تحديث التطبيق
+              إصلاح وفتح المنصة
             </button>
           </div>
         </div>
