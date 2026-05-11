@@ -52,10 +52,18 @@ export const MarketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
   const fetchCommodities = async () => {
     try {
       const fetchStart = Date.now();
-      const { data: commodities, error: supaError } = await supabase
-        .from('commodities')
-        .select('*')
-        .order('sector', { ascending: true }); 
+      
+      const timeoutPromise = new Promise((_, reject) => 
+        setTimeout(() => reject(new Error('Market fetch timed out')), 5000)
+      );
+
+      const { data: commodities, error: supaError } = await Promise.race([
+        supabase
+          .from('commodities')
+          .select('*')
+          .order('sector', { ascending: true }),
+        timeoutPromise
+      ]) as any;
 
       if (supaError) throw supaError;
 
@@ -122,6 +130,8 @@ export const MarketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
         setIsMockData(true);
         setData(mockData);
       }
+    } finally {
+      setLoading(false);
     }
   };
 

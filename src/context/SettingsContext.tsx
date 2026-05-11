@@ -70,9 +70,14 @@ export const SettingsProvider: React.FC<{ children: React.ReactNode }> = ({ chil
     
     const fetchAllSettings = async () => {
       try {
-        const { data, error } = await supabase
-          .from('platform_settings')
-          .select('key, value');
+        const timeoutPromise = new Promise((_, reject) => 
+          setTimeout(() => reject(new Error('Settings fetch timed out')), 5000)
+        );
+
+        const { data, error } = await Promise.race([
+          supabase.from('platform_settings').select('key, value'),
+          timeoutPromise
+        ]) as any;
           
         if (error) {
           console.warn('Could not load platform_settings from Supabase:', error);

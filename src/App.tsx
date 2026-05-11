@@ -25,6 +25,49 @@ import { Auth } from './pages/Auth';
 import { hasSupabaseConfig } from './lib/supabase';
 import { AlertCircle, PlusCircle } from 'lucide-react';
 
+const APP_VERSION = '2026-05-10-02';
+
+const AppVersionCheck: React.FC<{children: React.ReactNode}> = ({ children }) => {
+  const [needsUpdate, setNeedsUpdate] = React.useState(false);
+
+  React.useEffect(() => {
+    try {
+      const currentVersion = localStorage.getItem('APP_VERSION');
+      if (currentVersion !== APP_VERSION) {
+        setNeedsUpdate(true);
+      }
+    } catch (e) {
+      console.warn("Could not check/update APP_VERSION", e);
+    }
+  }, []);
+
+  if (needsUpdate) {
+    return (
+      <div className="min-h-screen bg-[#050A18] flex flex-col items-center justify-center p-4">
+        <div className="bg-[#121E3D] border border-red-500/30 p-12 rounded-[2rem] max-w-lg w-full text-center shadow-xl relative overflow-hidden">
+          <h2 className="text-2xl font-black text-white mb-4 uppercase tracking-tighter" dir="rtl">تم رصد نسخة جديدة من التطبيق</h2>
+          <p className="text-gray-400 text-sm mb-8 whitespace-pre-wrap" dir="rtl">
+            يرجى تحديث التطبيق للحصول على أحدث الميزات والإصلاحات ولضمان استقرار الأداء.
+          </p>
+          <button 
+            onClick={() => { 
+              localStorage.clear();
+              sessionStorage.clear();
+              localStorage.setItem('APP_VERSION', APP_VERSION);
+              window.location.reload(); 
+            }} 
+            className="bg-red-600 hover:bg-red-700 text-white px-8 py-3 rounded-xl font-bold uppercase text-sm transition-all shadow-lg"
+          >
+            تحديث التطبيق
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  return <>{children}</>;
+};
+
 class AppErrorBoundary extends React.Component<{children: React.ReactNode}, {hasError: boolean, error: Error | null}> {
   constructor(props: any) {
     super(props);
@@ -61,35 +104,6 @@ class AppErrorBoundary extends React.Component<{children: React.ReactNode}, {has
     }
     return this.props.children;
   }
-}
-
-const APP_VERSION = '2026-05-10-01';
-
-function AppVersionCheck() {
-  React.useEffect(() => {
-    try {
-      const currentVersion = localStorage.getItem('APP_VERSION');
-      if (currentVersion !== APP_VERSION) {
-        console.log(`Upgrading app version from ${currentVersion} to ${APP_VERSION}`);
-        
-        // Keep essential info if necessary, clear the rest
-        const keysToKeep = ['APP_VERSION'];
-        Object.keys(localStorage).forEach(key => {
-          if (!keysToKeep.includes(key)) {
-              localStorage.removeItem(key);
-          }
-        });
-        sessionStorage.clear();
-        
-        localStorage.setItem('APP_VERSION', APP_VERSION);
-        window.location.reload();
-      }
-    } catch (e) {
-      console.warn("Could not check/update APP_VERSION", e);
-    }
-  }, []);
-
-  return null;
 }
 
 const MaintenanceMode = () => {
@@ -139,29 +153,10 @@ const AppRoutes = () => {
       <Route path="/auth" element={<Auth />} />
       <Route path={formattedPath} element={<Admin />} />
       <Route path="/admin/login" element={<Admin />} />
-      <Route path="*" element={<Navigate to="/" replace />} />
+      <Route path="*" element={<Home />} />
     </Routes>
   );
 };
-
-function ForceRedirectOnRefresh() {
-  const location = useLocation();
-  const navigate = useNavigate();
-
-  React.useEffect(() => {
-    const isReload = 
-      (window.performance && window.performance.navigation && window.performance.navigation.type === 1) ||
-      (window.performance && window.performance.getEntriesByType && (window.performance.getEntriesByType("navigation")[0] as any)?.type === 'reload');
-
-    if (isReload) {
-      if (!location.pathname.startsWith('/admin') && location.pathname !== '/reports' && location.pathname !== '/analytics' && location.pathname !== '/') {
-        navigate('/', { replace: true });
-      }
-    }
-  }, []);
-
-  return null;
-}
 
 function AppContent() {
   const { settings, loading } = useSettings();
@@ -183,7 +178,6 @@ function AppContent() {
 
   return (
     <div className="min-h-screen bg-[#050A18] flex flex-col">
-      <ForceRedirectOnRefresh />
       {isSiteClosed && !isNotOnAdminPath && (
         <div className="bg-red-500 text-white text-center py-2 text-sm font-bold shadow-lg z-50">
           تنبيه: المنصة مغلقة حالياً للزوار (تحت الصيانة)
@@ -203,18 +197,19 @@ function AppContent() {
 function App() {
   return (
     <AppErrorBoundary>
-      <AppVersionCheck />
-      <SettingsProvider>
-        <LanguageProvider>
-          <AuthProvider>
-            <MarketProvider>
-              <VisitorTracker />
-              <ScrollToTop />
-              <AppContent />
-            </MarketProvider>
-          </AuthProvider>
-        </LanguageProvider>
-      </SettingsProvider>
+      <AppVersionCheck>
+        <SettingsProvider>
+          <LanguageProvider>
+            <AuthProvider>
+              <MarketProvider>
+                <VisitorTracker />
+                <ScrollToTop />
+                <AppContent />
+              </MarketProvider>
+            </AuthProvider>
+          </LanguageProvider>
+        </SettingsProvider>
+      </AppVersionCheck>
     </AppErrorBoundary>
   );
 }
