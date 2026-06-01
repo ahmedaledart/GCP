@@ -1,7 +1,7 @@
 import React, { useState, useMemo, useRef, useEffect } from 'react';
 import { Sector, SectorEn } from '../data/mockData';
 import { useMarketData } from '../context/MarketContext';
-import { Search, Filter, Download, ArrowUpDown, ChevronDown, ChevronUp, FileText, FileSpreadsheet, FileCode, Wifi, WifiOff, Columns, X, TrendingUp, Info, Activity, AlertCircle } from 'lucide-react';
+import { Search, Filter, Download, ArrowUpDown, ChevronDown, ChevronUp, FileText, FileSpreadsheet, FileCode, Wifi, WifiOff, Columns, X, TrendingUp, TrendingDown, Minus, Info, Activity, AlertCircle } from 'lucide-react';
 import { format } from 'date-fns';
 import { ar } from 'date-fns/locale';
 import { useLanguage } from '../context/LanguageContext';
@@ -567,8 +567,13 @@ export const AdvancedTable = () => {
                   </tr>
                 )}
                 {!loading && !error && filteredAndSortedData.map((item, index) => {
-                  const isUp = item.trend === 'up';
-                  const colorClass = isUp ? 'text-[#10B981]' : 'text-[#EF4444]';
+                  const changePct = Number(item.changePercent) || 0;
+                  const isUp = changePct > 0;
+                  const isDown = changePct < 0;
+                  const isNeutral = changePct === 0;
+                  const colorClass = isUp ? 'text-[#10B981]' : isDown ? 'text-[#EF4444]' : 'text-gray-500';
+                  
+                  const TrendIcon = isUp ? TrendingUp : isDown ? TrendingDown : Minus;
                   const name = language === 'ar' ? item.nameAr : item.nameEn;
                   const sector = language === 'ar' ? item.sectorAr : item.sectorEn;
                   
@@ -612,7 +617,8 @@ export const AdvancedTable = () => {
                       {visibleColumns.changePercent && (
                         <td className={`p-4 ${language === 'ar' ? 'text-right' : 'text-left'} font-mono font-bold ${colorClass} border-x border-[#1C2E5A]/30`} dir="ltr">
                           <div className={`flex items-center ${language === 'ar' ? 'justify-end' : 'justify-start'} gap-1`}>
-                            {isUp ? '+' : ''}{(item.changePercent || 0).toFixed(2)}%
+                            <TrendIcon size={14} className={colorClass} strokeWidth={3} />
+                            <span>{isUp ? '+' : ''}{changePct.toFixed(2)}%</span>
                           </div>
                           <div className={`text-[10px] opacity-70 ${language === 'ar' ? 'text-right' : 'text-left'}`}>
                             {isUp ? '+' : ''}{(item.changeAmount || 0).toFixed(2)}
@@ -682,8 +688,13 @@ export const AdvancedTable = () => {
                </div>
             )}
             {!loading && !error && filteredAndSortedData.map((item) => {
-              const isUp = item.trend === 'up';
-              const colorClass = isUp ? 'text-[#10B981]' : 'text-[#EF4444]';
+              const changePct = Number(item.changePercent) || 0;
+              const isUp = changePct > 0;
+              const isDown = changePct < 0;
+              const isNeutral = changePct === 0;
+              const colorClass = isUp ? 'text-[#10B981]' : isDown ? 'text-[#EF4444]' : 'text-gray-500';
+              const TrendIcon = isUp ? TrendingUp : isDown ? TrendingDown : Minus;
+              
               const name = language === 'ar' ? item.nameAr : item.nameEn;
               const sector = language === 'ar' ? item.sectorAr : item.sectorEn;
 
@@ -705,8 +716,9 @@ export const AdvancedTable = () => {
                         </span>
                         <PriceDisplay price={item.price} className="text-xl font-bold text-white" />
                       </div>
-                      <div className={`text-sm font-bold ${colorClass}`}>
-                        {isUp ? '+' : ''}{(item.changePercent || 0).toFixed(2)}%
+                      <div className={`text-sm font-bold flex items-center justify-end gap-1 ${colorClass}`}>
+                        <TrendIcon size={14} strokeWidth={3} />
+                        <span>{isUp ? '+' : ''}{changePct.toFixed(2)}%</span>
                       </div>
                     </div>
                   </div>

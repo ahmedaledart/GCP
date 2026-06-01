@@ -11,31 +11,43 @@ export const Contact = () => {
   const [formData, setFormData] = useState({
     name: '',
     email: '',
+    phone: '',
     subject: '',
     message: ''
   });
   const [status, setStatus] = useState<'idle' | 'sending' | 'success' | 'error'>('idle');
+  const [errorMessage, setErrorMessage] = useState<string>('');
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setStatus('sending');
+    setErrorMessage('');
 
     try {
-      const { error } = await supabase.from('messages').insert([{
-        name: formData.name,
+      const payload = {
+        full_name: formData.name,
         email: formData.email,
+        phone: formData.phone || '',
         subject: formData.subject,
         message: formData.message,
-        read: false,
-        created_at: new Date().toISOString()
-      }]);
+        status: 'unread',
+        is_read: false,
+        source: 'contact_form',
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString()
+      };
+      
+      console.log('Sending message payload:', payload);
+
+      const { error } = await supabase.from('messages').insert([payload]);
       
       if (error) throw error;
 
       setStatus('success');
-      setFormData({ name: '', email: '', subject: '', message: '' });
-    } catch (error) {
+      setFormData({ name: '', email: '', phone: '', subject: '', message: '' });
+    } catch (error: any) {
       console.error('Error sending message:', error);
+      setErrorMessage(error.message || 'Unknown error occurred');
       setStatus('error');
     }
   };
@@ -183,19 +195,35 @@ export const Contact = () => {
                     </div>
                   </div>
 
-                  <div className="space-y-2">
-                    <label className="text-sm font-bold text-gray-400 flex items-center gap-2">
-                      <MessageSquare size={16} className="text-[#D4AF37]" />
-                      {language === 'ar' ? 'موضوع الرسالة' : 'Subject'}
-                    </label>
-                    <input
-                      required
-                      type="text"
-                      value={formData.subject}
-                      onChange={(e) => setFormData({ ...formData, subject: e.target.value })}
-                      className="w-full bg-[#0A1128] border border-[#1C2E5A] rounded-xl px-4 py-4 text-white focus:outline-none focus:border-[#D4AF37] transition-all placeholder-gray-600"
-                      placeholder={language === 'ar' ? 'ما هو موضوع استفسارك؟' : 'What is your inquiry about?'}
-                    />
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                    <div className="space-y-2">
+                      <label className="text-sm font-bold text-gray-400 flex items-center gap-2">
+                        <Phone size={16} className="text-[#D4AF37]" />
+                        {language === 'ar' ? 'رقم الهاتف' : 'Phone Number'}
+                      </label>
+                      <input
+                        type="text"
+                        value={formData.phone}
+                        onChange={(e) => setFormData({ ...formData, phone: e.target.value })}
+                        className="w-full bg-[#0A1128] border border-[#1C2E5A] rounded-xl px-4 py-4 text-white focus:outline-none focus:border-[#D4AF37] transition-all placeholder-gray-600 font-mono text-left"
+                        dir="ltr"
+                        placeholder="+218 9X XXX XXXX"
+                      />
+                    </div>
+                    <div className="space-y-2">
+                      <label className="text-sm font-bold text-gray-400 flex items-center gap-2">
+                        <MessageSquare size={16} className="text-[#D4AF37]" />
+                        {language === 'ar' ? 'موضوع الرسالة' : 'Subject'}
+                      </label>
+                      <input
+                        required
+                        type="text"
+                        value={formData.subject}
+                        onChange={(e) => setFormData({ ...formData, subject: e.target.value })}
+                        className="w-full bg-[#0A1128] border border-[#1C2E5A] rounded-xl px-4 py-4 text-white focus:outline-none focus:border-[#D4AF37] transition-all placeholder-gray-600"
+                        placeholder={language === 'ar' ? 'ما هو موضوع استفسارك؟' : 'What is your inquiry about?'}
+                      />
+                    </div>
                   </div>
 
                   <div className="space-y-2">
@@ -219,8 +247,8 @@ export const Contact = () => {
                       animate={{ opacity: 1, x: 0 }}
                       className="flex items-center gap-2 text-red-500 bg-red-500/10 p-4 rounded-xl border border-red-500/20"
                     >
-                      <AlertCircle size={20} />
-                      <span>{language === 'ar' ? 'حدث خطأ أثناء الإرسال، يرجى المحاولة لاحقاً.' : 'An error occurred while sending, please try again later.'}</span>
+                      <AlertCircle size={20} className="flex-shrink-0" />
+                      <span className="text-sm">{errorMessage || (language === 'ar' ? 'حدث خطأ أثناء الإرسال، يرجى المحاولة لاحقاً.' : 'An error occurred while sending, please try again later.')}</span>
                     </motion.div>
                   )}
 

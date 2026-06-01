@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
-import { X, TrendingUp, Activity, Info, Calendar } from 'lucide-react';
+import { X, TrendingUp, TrendingDown, Minus, Activity, Info, Calendar } from 'lucide-react';
 import { AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts';
 import { supabase } from '../lib/supabase';
 import { useLanguage } from '../context/LanguageContext';
@@ -247,28 +247,34 @@ export const CommodityHistoryModal: React.FC<CommodityHistoryModalProps> = ({ co
 
             {/* Stats Grid */}
             {!loading && historyData.length > 0 && (
-              <div className="grid grid-cols-2 md:grid-cols-4 gap-6">
-                 {[
-                    { label: language === 'ar' ? 'أول سعر مسجل' : 'Initial Price', value: stats.firstPrice.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 }), icon: <TrendingUp size={14} /> },
-                    { label: language === 'ar' ? 'آخر سعر مسجل' : 'Closing Price', value: stats.lastPrice.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 }), icon: <Activity size={14} /> },
-                    { label: language === 'ar' ? 'أعلى قمة تاريخية' : 'All-time High', value: stats.highPrice.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 }), color: 'text-green-500' },
-                    { label: language === 'ar' ? 'أدنى قاع تاريخي' : 'All-time Low', value: stats.lowPrice.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 }), color: 'text-red-500' },
-                    { label: language === 'ar' ? 'صافي التغير' : 'Net Change', value: `${changeVal >= 0 ? '+' : ''}${changeVal.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`, color: changeVal >= 0 ? 'text-green-500' : 'text-red-500' },
-                    { label: language === 'ar' ? 'نسبة التغير الكلية' : 'Historic Growth %', value: `${changePct >= 0 ? '+' : ''}${changePct.toFixed(2)}%`, color: changePct >= 0 ? 'text-green-500' : 'text-red-500' },
-                    { label: language === 'ar' ? 'تاريخ أول قراءة' : 'Since Date', value: new Date(stats.firstDate).toLocaleDateString(language === 'ar' ? 'ar-LY' : 'en-US', { year: 'numeric', month: 'long', day: 'numeric' }) },
-                    { label: language === 'ar' ? 'آخر تحديث للبيانات' : 'Last Updated On', value: new Date(stats.lastDate).toLocaleDateString(language === 'ar' ? 'ar-LY' : 'en-US', { year: 'numeric', month: 'long', day: 'numeric' }) }
-                 ].map((stat, i) => (
-                    <div key={i} className="bg-[#121E3D] border border-[#1C2E5A] p-6 rounded-2xl flex flex-col justify-between group hover:border-[#D4AF37]/30 transition-all shadow-xl shadow-black/20">
-                       <div className="flex items-center justify-between mb-4">
-                          <div className="text-[9px] text-gray-500 uppercase tracking-widest font-black leading-tight max-w-[80px]">{stat.label}</div>
-                          <div className="w-6 h-6 bg-[#0A1128] rounded-lg border border-[#1C2E5A] flex items-center justify-center text-[#D4AF37] group-hover:scale-110 transition-transform">
-                             {stat.icon || <Calendar size={12} />}
-                          </div>
-                       </div>
-                       <div className={`text-xl font-black ${stat.color || 'text-white'} tracking-tight`}>{stat.value}</div>
-                    </div>
-                 ))}
-              </div>
+              <>
+                <h3 className="text-xl font-black text-white mb-6 uppercase tracking-widest flex items-center gap-3">
+                  <Activity className="text-[#D4AF37]" size={24} />
+                  {language === 'ar' ? 'مقارنة الأداء' : 'Performance Comparison'}
+                </h3>
+                <div className="grid grid-cols-2 md:grid-cols-4 gap-6">
+                   {[
+                      { label: language === 'ar' ? 'السعر الأول' : 'Initial Price', value: stats.firstPrice.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 }), icon: <Activity size={14} /> },
+                      { label: language === 'ar' ? 'السعر الأخير' : 'Closing Price', value: stats.lastPrice.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 }), icon: <Activity size={14} /> },
+                      { label: language === 'ar' ? 'مقدار التغير' : 'Change Amount', value: `${changeVal >= 0 ? '+' : ''}${changeVal.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`, color: changeVal > 0 ? 'text-green-500' : changeVal < 0 ? 'text-red-500' : 'text-gray-500' },
+                      { label: language === 'ar' ? 'نسبة التغير %' : 'Change %', value: `${changePct >= 0 ? '+' : ''}${changePct.toFixed(2)}%`, color: changePct > 0 ? 'text-green-500' : changePct < 0 ? 'text-red-500' : 'text-gray-500' },
+                      { label: language === 'ar' ? 'أعلى سعر' : 'High Price', value: stats.highPrice.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 }), color: 'text-green-500' },
+                      { label: language === 'ar' ? 'أدنى سعر' : 'Low Price', value: stats.lowPrice.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 }), color: 'text-red-500' },
+                      { label: language === 'ar' ? 'الاتجاه العام' : 'General Trend', value: changePct > 0 ? (language === 'ar' ? 'صاعد' : 'Bullish') : changePct < 0 ? (language === 'ar' ? 'هابط' : 'Bearish') : (language === 'ar' ? 'مستقر' : 'Neutral'), color: changePct > 0 ? 'text-green-500' : changePct < 0 ? 'text-red-500' : 'text-gray-500', icon: changePct > 0 ? <TrendingUp size={14} /> : changePct < 0 ? <TrendingDown size={14} /> : <Minus size={14} /> },
+                      { label: language === 'ar' ? 'آخر تحديث' : 'Last Updated On', value: new Date(stats.lastDate).toLocaleDateString(language === 'ar' ? 'ar-LY' : 'en-US', { year: 'numeric', month: 'long', day: 'numeric' }) }
+                   ].map((stat, i) => (
+                      <div key={i} className="bg-[#121E3D] border border-[#1C2E5A] p-6 rounded-2xl flex flex-col justify-between group hover:border-[#D4AF37]/30 transition-all shadow-xl shadow-black/20">
+                         <div className="flex items-center justify-between mb-4">
+                            <div className="text-[9px] text-gray-500 uppercase tracking-widest font-black leading-tight max-w-[80px]">{stat.label}</div>
+                            <div className="w-6 h-6 bg-[#0A1128] rounded-lg border border-[#1C2E5A] flex items-center justify-center text-[#D4AF37] group-hover:scale-110 transition-transform">
+                               {stat.icon || <Calendar size={12} />}
+                            </div>
+                         </div>
+                         <div className={`text-xl font-black ${stat.color || 'text-white'} tracking-tight`} dir="ltr">{stat.value}</div>
+                      </div>
+                   ))}
+                </div>
+              </>
             )}
           </div>
         </motion.div>

@@ -1138,6 +1138,15 @@ const AdminInner = () => {
             {(adminUser?.role === 'super_admin' || adminUser?.permissions?.includes('analyses')) && (
               <NavItem active={activeTab === 'analyses'} icon={<FileBarChart />} label={language === 'ar' ? 'إدارة التحليلات' : 'Analyses'} onClick={() => { setActiveTab('analyses'); setIsMobileMenuOpen(false); }} language={language} />
             )}
+            {(adminUser?.role === 'super_admin' || adminUser?.permissions?.includes('messages') || adminUser?.role === 'admin') && (
+              <NavItem active={activeTab === 'messages'} icon={<MessageSquare />} label={language === 'ar' ? 'صندوق الرسائل' : 'Messages'} onClick={() => { setActiveTab('messages'); setIsMobileMenuOpen(false); }} language={language} >
+                {messages.filter(m => !m.is_read).length > 0 && (
+                  <span className="bg-red-500 text-white text-[9px] font-bold px-2 py-0.5 rounded-full ml-auto">
+                    {messages.filter(m => !m.is_read).length}
+                  </span>
+                )}
+              </NavItem>
+            )}
             {(adminUser?.role === 'super_admin' || adminUser?.permissions?.includes('admin_users')) && (
               <NavItem active={activeTab === 'admin_users'} icon={<Shield />} label={language === 'ar' ? 'إدارة الأدمن' : 'Admin Users'} onClick={() => { setActiveTab('admin_users'); setIsMobileMenuOpen(false); }} language={language} />
             )}
@@ -1619,19 +1628,19 @@ const AdminInner = () => {
                         initial={{ opacity: 0, y: 15 }}
                         animate={{ opacity: 1, y: 0 }}
                         key={msg.id} 
-                        className={`bg-[#0A1128] p-8 rounded-[2rem] border transition-all shadow-2xl relative overflow-hidden group ${msg.read ? 'border-[#1C2E5A]' : 'border-[#D4AF37]/50 ring-1 ring-[#D4AF37]/20 shadow-[#D4AF37]/5'}`}
+                        className={`bg-[#0A1128] p-8 rounded-[2rem] border transition-all shadow-2xl relative overflow-hidden group ${msg.is_read ? 'border-[#1C2E5A]' : 'border-[#D4AF37]/50 ring-1 ring-[#D4AF37]/20 shadow-[#D4AF37]/5'}`}
                       >
                         <div className="flex justify-between items-start mb-6">
                           <div className="flex items-center gap-4">
                             <div className="w-12 h-12 bg-[#121E3D] rounded-2xl flex items-center justify-center border border-[#1C2E5A] group-hover:border-[#D4AF37]/30 transition-all font-black text-[#D4AF37]">
-                              {msg.name?.[0]?.toUpperCase() || 'U'}
+                              {msg.full_name?.[0]?.toUpperCase() || 'U'}
                             </div>
                             <div>
                               <h4 className="text-white font-black text-lg tracking-tight uppercase flex items-center gap-2">
-                                {msg.name}
-                                {!msg.read && <span className="w-2 h-2 rounded-full bg-[#D4AF37] animate-pulse"></span>}
+                                {msg.full_name}
+                                {!msg.is_read && <span className="w-2 h-2 rounded-full bg-[#D4AF37] animate-pulse"></span>}
                               </h4>
-                              <p className="text-[10px] text-gray-600 font-black tracking-widest uppercase mt-0.5">{msg.email}</p>
+                              <p className="text-[10px] text-gray-600 font-black tracking-widest uppercase mt-0.5">{msg.email}{msg.phone ? ` • ${msg.phone}` : ''}</p>
                             </div>
                           </div>
                           <div className="text-right">
@@ -1650,12 +1659,12 @@ const AdminInner = () => {
                         </div>
                         
                         <div className="flex justify-end gap-3 mt-6">
-                          {!msg.read && (
+                          {!msg.is_read && (
                             <button onClick={async () => { 
-                              await supabase.from('messages').update({ read: true }).eq('id', msg.id); 
+                              await supabase.from('messages').update({ is_read: true, status: 'read' }).eq('id', msg.id); 
                               fetchData();
                             }} className="px-6 py-3 bg-[#D4AF37] text-[#0A1128] text-[10px] uppercase font-black tracking-widest rounded-xl hover:bg-[#E5C158] transition-all shadow-lg shadow-[#D4AF37]/10">
-                              {language === 'ar' ? 'تحديد كمقروء' : 'Mark as Read'}
+                              {language === 'ar' ? 'تحديد كمقروءة' : 'Mark as Read'}
                             </button>
                           )}
                           <button onClick={async () => { 
@@ -1664,7 +1673,7 @@ const AdminInner = () => {
                                fetchData();
                              } 
                           }} className="px-6 py-3 bg-red-500/10 text-red-500 border border-red-500/20 text-[10px] uppercase font-black tracking-widest rounded-xl hover:bg-red-500/20 transition-all">
-                            {language === 'ar' ? 'حذف' : 'Delete'}
+                            {language === 'ar' ? 'حذف الرسالة' : 'Delete Message'}
                           </button>
                         </div>
                       </motion.div>
@@ -2517,7 +2526,7 @@ const AdminInner = () => {
     );
 };
 
-const NavItem = ({ active, icon, label, onClick, language }: any) => (
+const NavItem = ({ active, icon, label, onClick, language, children }: any) => (
   <button 
     onClick={onClick}
     className={`w-full flex items-center gap-4 px-6 py-4 rounded-2xl transition-all relative group ${active ? 'text-[#0A1128] font-black' : 'text-gray-500 hover:text-white hover:bg-[#121E3D]'}`}
@@ -2534,6 +2543,7 @@ const NavItem = ({ active, icon, label, onClick, language }: any) => (
         {React.cloneElement(icon, { size: 20 })}
       </div>
       <span className={`text-[11px] font-black uppercase tracking-tight truncate flex-1 ${language === 'ar' ? 'text-right' : 'text-left'}`}>{label}</span>
+      {children}
       {active && (
         <div className={`w-1.5 h-1.5 rounded-full bg-white shadow-sm absolute ${language === 'ar' ? '-right-1' : '-left-1'}`}></div>
       )}
