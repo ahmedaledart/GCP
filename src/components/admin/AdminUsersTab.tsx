@@ -9,18 +9,11 @@ export const AdminUsersTab = ({ currentUser, adminUser }: { currentUser: any, ad
   const [users, setUsers] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [editingId, setEditingId] = useState<string | null>(null);
-  const [formData, setFormData] = useState({ email: '', role: 'editor', permissions: [] as string[], is_active: true });
+  const [formData, setFormData] = useState({ email: '', full_name: '', role: 'editor', can_manage_prices: false, can_manage_news: false, can_manage_analysis: false, can_manage_sectors: false, can_manage_admins: false, is_active: true });
 
   const enforcePermission = (permissionKey: string, moduleName: string) => {
     if (adminUser?.role === 'super_admin') return true;
-    if (adminUser && adminUser[permissionKey]) return true;
-    if (adminUser && Array.isArray(adminUser.permissions)) {
-      if (permissionKey === 'can_manage_prices' && (adminUser.permissions.includes('commodities') || adminUser.permissions.includes('manage_prices'))) return true;
-      if (permissionKey === 'can_manage_news' && adminUser.permissions.includes('news')) return true;
-      if (permissionKey === 'can_manage_analysis' && adminUser.permissions.includes('analyses')) return true;
-      if (permissionKey === 'can_manage_sectors' && adminUser.permissions.includes('sectors')) return true;
-      if (permissionKey === 'can_manage_admins' && (adminUser.permissions.includes('admin_users') || adminUser.permissions.includes('settings'))) return true;
-    }
+    if (adminUser && adminUser[permissionKey] === true) return true;
     alert(language === 'ar' ? `ليس لديك صلاحية لإدارة ${moduleName} المحددة.` : `You don't have permission to manage ${moduleName}.`);
     return false;
   };
@@ -33,13 +26,11 @@ export const AdminUsersTab = ({ currentUser, adminUser }: { currentUser: any, ad
   ];
 
   const availablePermissions = [
-    { id: 'commodities', labelAr: 'إدارة الأسعار', labelEn: 'Manage Commodities' },
-    { id: 'manage_prices', labelAr: 'أرشيف الأسعار', labelEn: 'Price Archive' },
-    { id: 'news', labelAr: 'إدارة الأخبار', labelEn: 'Manage News' },
-    { id: 'analyses', labelAr: 'إدارة التحليلات', labelEn: 'Manage Analyses' },
-    { id: 'sectors', labelAr: 'إدارة القطاعات', labelEn: 'Manage Sectors' },
-    { id: 'admin_users', labelAr: 'إدارة الأدمن', labelEn: 'Manage Admins' },
-    { id: 'settings', labelAr: 'إعدادات المنصة', labelEn: 'Settings' }
+    { id: 'can_manage_prices', labelAr: 'إدارة الأسعار', labelEn: 'Manage Commodities' },
+    { id: 'can_manage_news', labelAr: 'إدارة الأخبار', labelEn: 'Manage News' },
+    { id: 'can_manage_analysis', labelAr: 'إدارة التحليلات', labelEn: 'Manage Analyses' },
+    { id: 'can_manage_sectors', labelAr: 'إدارة القطاعات', labelEn: 'Manage Sectors' },
+    { id: 'can_manage_admins', labelAr: 'إدارة الأدمن والإعدادات', labelEn: 'Manage Admins & Settings' }
   ];
 
   useEffect(() => {
@@ -57,17 +48,30 @@ export const AdminUsersTab = ({ currentUser, adminUser }: { currentUser: any, ad
     if (!formData.email) return;
     
     try {
+      const payload = {
+        email: formData.email,
+        full_name: formData.full_name,
+        role: formData.role,
+        can_manage_prices: formData.can_manage_prices,
+        can_manage_news: formData.can_manage_news,
+        can_manage_analysis: formData.can_manage_analysis,
+        can_manage_sectors: formData.can_manage_sectors,
+        can_manage_admins: formData.can_manage_admins,
+        is_active: formData.is_active,
+        updated_at: new Date().toISOString()
+      };
+
       if (editingId && editingId !== 'new') {
-        const { error } = await supabase.from('admin_users').update(formData).eq('id', editingId);
+        const { error } = await supabase.from('admin_users').update(payload).eq('id', editingId);
         if (error) throw error;
         alert(language === 'ar' ? 'تم تحديث البيانات بنجاح' : 'Admin updated successfully');
       } else {
-        const { error } = await supabase.from('admin_users').insert([formData]);
+        const { error } = await supabase.from('admin_users').insert([payload]);
         if (error) throw error;
         alert(language === 'ar' ? 'تم إضافة المشرف بنجاح' : 'Admin added successfully');
       }
       setEditingId(null);
-      setFormData({ email: '', role: 'editor', permissions: [], is_active: true });
+      setFormData({ email: '', full_name: '', role: 'editor', can_manage_prices: false, can_manage_news: false, can_manage_analysis: false, can_manage_sectors: false, can_manage_admins: false, is_active: true });
       fetchUsers();
     } catch (err: any) {
       alert(err.message);
@@ -136,13 +140,12 @@ export const AdminUsersTab = ({ currentUser, adminUser }: { currentUser: any, ad
                 <label className="text-[10px] font-black text-[#D4AF37] uppercase tracking-widest block border-b border-[#1C2E5A] pb-4 mb-4">{language === 'ar' ? 'تحديد الصلاحيات المخصصة' : 'Custom Permissions'}</label>
                 <div className="grid grid-cols-2 sm:grid-cols-3 gap-4">
                   {availablePermissions.map(p => (
-                    <label key={p.id} className={`flex items-center gap-3 p-4 rounded-xl border cursor-pointer transition-all ${formData.permissions.includes(p.id) ? 'bg-[#D4AF37]/10 border-[#D4AF37]/50 text-white' : 'bg-[#121E3D] border-[#1C2E5A] text-gray-400 hover:border-[#D4AF37]/30'}`}>
-                      <input type="checkbox" className="hidden" checked={formData.permissions.includes(p.id)} onChange={(e) => {
-                         if (e.target.checked) setFormData({...formData, permissions: [...formData.permissions, p.id]});
-                         else setFormData({...formData, permissions: formData.permissions.filter(x => x !== p.id)});
+                    <label key={p.id} className={`flex items-center gap-3 p-4 rounded-xl border cursor-pointer transition-all ${(formData as any)[p.id] ? 'bg-[#D4AF37]/10 border-[#D4AF37]/50 text-white' : 'bg-[#121E3D] border-[#1C2E5A] text-gray-400 hover:border-[#D4AF37]/30'}`}>
+                      <input type="checkbox" className="hidden" checked={!!(formData as any)[p.id]} onChange={(e) => {
+                         setFormData({...formData, [p.id]: e.target.checked});
                       }} />
-                      <div className={`w-5 h-5 rounded-md flex items-center justify-center border ${formData.permissions.includes(p.id) ? 'bg-[#D4AF37] border-[#D4AF37]' : 'bg-[#0A1128] border-gray-600'}`}>
-                        {formData.permissions.includes(p.id) && <CheckCircle2 size={14} className="text-[#0A1128]" />}
+                      <div className={`w-5 h-5 rounded-md flex items-center justify-center border ${(formData as any)[p.id] ? 'bg-[#D4AF37] border-[#D4AF37]' : 'bg-[#0A1128] border-gray-600'}`}>
+                        {(formData as any)[p.id] && <CheckCircle2 size={14} className="text-[#0A1128]" />}
                       </div>
                       <span className="font-bold text-sm">{language === 'ar' ? p.labelAr : p.labelEn}</span>
                     </label>
@@ -208,10 +211,10 @@ export const AdminUsersTab = ({ currentUser, adminUser }: { currentUser: any, ad
                            <span className={`inline-flex items-center justify-center px-3 py-1 text-[10px] uppercase font-black tracking-widest rounded-lg self-start ${u.role === 'super_admin' ? 'bg-[#D4AF37]/10 text-[#D4AF37] border border-[#D4AF37]/20' : 'bg-blue-500/10 text-blue-400 border border-blue-500/20'}`}>
                              {roles.find(r => r.id === u.role)?.[language === 'ar' ? 'labelAr' : 'labelEn'] || u.role}
                            </span>
-                           {u.role !== 'super_admin' && u.permissions && u.permissions.length > 0 && (
+                           {u.role !== 'super_admin' && (
                              <div className="flex flex-wrap gap-1 mt-1">
-                               {u.permissions.map((p: string) => (
-                                 <span key={p} className="text-[9px] bg-[#121E3D] text-gray-400 px-2 py-0.5 rounded-md border border-[#1C2E5A]">{availablePermissions.find(ap => ap.id === p)?.[language === 'ar' ? 'labelAr' : 'labelEn'] || p}</span>
+                               {availablePermissions.filter(p => u[p.id] === true).map((p) => (
+                                 <span key={p.id} className="text-[9px] bg-[#121E3D] text-gray-400 px-2 py-0.5 rounded-md border border-[#1C2E5A]">{language === 'ar' ? p.labelAr : p.labelEn}</span>
                                ))}
                              </div>
                            )}
@@ -228,7 +231,7 @@ export const AdminUsersTab = ({ currentUser, adminUser }: { currentUser: any, ad
                          <div className="flex items-center gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
                             <button onClick={() => {
                               if (!enforcePermission('can_manage_admins', 'المشرفين')) return;
-                              setEditingId(u.id); setFormData({ email: u.email, role: u.role, permissions: u.permissions || [], is_active: u.is_active });
+                              setEditingId(u.id); setFormData({ email: u.email, full_name: u.full_name || '', role: u.role, can_manage_prices: u.can_manage_prices, can_manage_news: u.can_manage_news, can_manage_analysis: u.can_manage_analysis, can_manage_sectors: u.can_manage_sectors, can_manage_admins: u.can_manage_admins, is_active: u.is_active });
                             }} className="w-8 h-8 rounded-lg bg-[#1C2E5A] flex items-center justify-center text-gray-400 hover:text-white transition-colors">
                               <Edit size={14} />
                             </button>

@@ -166,17 +166,8 @@ const AdminInner = () => {
 
   const enforcePermission = (permissionKey: string, moduleName: string) => {
     if (adminUser?.role === 'super_admin') return true;
-    if (adminUser && adminUser[permissionKey]) return true;
+    if (adminUser && adminUser[permissionKey] === true) return true;
     
-    // Also check if permissions array exists and contains the required permission (or derived names)
-    if (adminUser && Array.isArray(adminUser.permissions)) {
-      if (permissionKey === 'can_manage_prices' && (adminUser.permissions.includes('commodities') || adminUser.permissions.includes('manage_prices'))) return true;
-      if (permissionKey === 'can_manage_news' && adminUser.permissions.includes('news')) return true;
-      if (permissionKey === 'can_manage_analysis' && adminUser.permissions.includes('analyses')) return true;
-      if (permissionKey === 'can_manage_sectors' && adminUser.permissions.includes('sectors')) return true;
-      if (permissionKey === 'can_manage_admins' && adminUser.permissions.includes('admin_users')) return true;
-    }
-
     showToast(language === 'ar' ? `ليس لديك صلاحية لإدارة ${moduleName} المحددة.` : `You don't have permission to manage ${moduleName}.`, 'error');
     return false;
   };
@@ -239,7 +230,10 @@ const AdminInner = () => {
             role: 'super_admin',
             is_active: true,
             can_manage_admins: true,
-            permissions: ['*']
+            can_manage_prices: true,
+            can_manage_news: true,
+            can_manage_analysis: true,
+            can_manage_sectors: true
           });
         } else {
           setIsAdmin(false);
@@ -291,7 +285,10 @@ const AdminInner = () => {
                 role: 'super_admin',
                 is_active: true,
                 can_manage_admins: true,
-                permissions: ['*']
+                can_manage_prices: true,
+                can_manage_news: true,
+                can_manage_analysis: true,
+                can_manage_sectors: true
               });
             } else {
               // Not admin

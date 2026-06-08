@@ -16,14 +16,7 @@ export const PlatformSettingsTab = ({ adminUser }: { adminUser?: any }) => {
 
   const enforcePermission = (permissionKey: string, moduleName: string) => {
     if (adminUser?.role === 'super_admin') return true;
-    if (adminUser && adminUser[permissionKey]) return true;
-    if (adminUser && Array.isArray(adminUser.permissions)) {
-      if (permissionKey === 'can_manage_prices' && (adminUser.permissions.includes('commodities') || adminUser.permissions.includes('manage_prices'))) return true;
-      if (permissionKey === 'can_manage_news' && adminUser.permissions.includes('news')) return true;
-      if (permissionKey === 'can_manage_analysis' && adminUser.permissions.includes('analyses')) return true;
-      if (permissionKey === 'can_manage_sectors' && adminUser.permissions.includes('sectors')) return true;
-      if (permissionKey === 'can_manage_admins' && (adminUser.permissions.includes('admin_users') || adminUser.permissions.includes('settings'))) return true;
-    }
+    if (adminUser && adminUser[permissionKey] === true) return true;
     alert(language === 'ar' ? `ليس لديك صلاحية لإدارة ${moduleName} المحددة.` : `You don't have permission to manage ${moduleName}.`);
     return false;
   };
