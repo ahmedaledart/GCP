@@ -51,6 +51,7 @@ export const AdminUsersTab = ({ currentUser, adminUser }: { currentUser: any, ad
       const fetchPromise = supabase.from('admin_users').select('*').order('created_at', { ascending: false });
       
       const { data, error } = (await Promise.race([fetchPromise, timeoutPromise])) as any;
+      console.log('Admin users fetch result:', data);
       if (error) throw error;
       if (data) setUsers(data);
     } catch (error: any) {

@@ -137,6 +137,7 @@ const AdminInner = () => {
     platformName: 'LIBYA MARKET'
   });
   const [loading, setLoading] = useState(true);
+  const [fetchError, setFetchError] = useState<string | null>(null);
 
   // Form States
   const [editingItem, setEditingItem] = useState<any>(null);
@@ -225,9 +226,6 @@ const AdminInner = () => {
           } else {
             setIsAdmin(false);
             setAdminUser(null);
-            if (event === 'SIGNED_IN') {
-              await supabase.auth.signOut();
-            }
           }
         } else if (currentUser.email === ADMIN_EMAIL) {
           console.log('Admin profile: Super Admin Hardcoded');
@@ -245,9 +243,6 @@ const AdminInner = () => {
         } else {
           setIsAdmin(false);
           setAdminUser(null);
-          if (event === 'SIGNED_IN') {
-             await supabase.auth.signOut();
-          }
         }
         } catch (err) {
           console.error('Error fetching admin profile in onAuthStateChange:', err);
@@ -299,7 +294,8 @@ const AdminInner = () => {
                 setIsAdmin(true);
                 setAdminUser(adminData);
               } else {
-                await supabase.auth.signOut();
+                setIsAdmin(false);
+                setAdminUser(null);
               }
             } else if (currentUser.email === ADMIN_EMAIL) {
               console.log('Admin profile (mount): Super Admin Hardcoded');
@@ -316,7 +312,8 @@ const AdminInner = () => {
               });
             } else {
               // Not admin
-              await supabase.auth.signOut();
+              setIsAdmin(false);
+              setAdminUser(null);
             }
           } catch (adminErr) {
             console.error('Failed to parse admin data:', adminErr);
@@ -353,12 +350,49 @@ const AdminInner = () => {
   const fetchData = async () => {
     try {
       setLoading(true);
+      console.log('Dashboard loading started');
       
+      const timeoutPromise = new Promise((_, reject) => 
+        setTimeout(() => reject(new Error('Request Timeout')), 5000)
+      );
+
+      const fetchAllData = async () => {
+        const [
+          commRes,
+          newsRes,
+          sectorsRes,
+          analysesRes,
+          msgRes,
+          logsRes,
+          settingsRes
+        ] = await Promise.all([
+          supabase.from('commodities').select('*').order('created_at', { ascending: false }),
+          supabase.from('news').select('*').order('created_at', { ascending: false }),
+          supabase.from('sectors').select('*').order('sort_order', { ascending: true }),
+          supabase.from('analyses').select('*').order('created_at', { ascending: false }),
+          supabase.from('messages').select('*').order('created_at', { ascending: false }),
+          supabase.from('activity_logs').select('*').order('timestamp', { ascending: false }).limit(50),
+          supabase.from('platform_settings').select('*')
+        ]);
+        
+        return {
+          commData: commRes.data, commError: commRes.error,
+          newsData: newsRes.data, newsError: newsRes.error,
+          sectorsData: sectorsRes.data, secError: sectorsRes.error,
+          analysesData: analysesRes.data, anError: analysesRes.error,
+          msgData: msgRes.data, msgError: msgRes.error,
+          logsData: logsRes.data,
+          settingsData: settingsRes.data
+        };
+      };
+
+      const result = await Promise.race([fetchAllData(), timeoutPromise]) as any;
+      const { commData, commError, newsData, newsError, sectorsData, secError, analysesData, anError, msgData, msgError, logsData, settingsData } = result;
+
       // Commodities
-      const { data: commData, error: commError } = await supabase.from('commodities').select('*').order('created_at', { ascending: false });
       if (commError) { console.error('Error fetching commodities:', commError); }
       if (commData) {
-        setCommodities(commData.map(c => ({
+        setCommodities(commData.map((c: any) => ({
           id: String(c.id),
           nameAr: c.name_ar,
           nameEn: c.name_en,
@@ -382,10 +416,9 @@ const AdminInner = () => {
       }
 
       // News
-      const { data: newsData, error: newsError } = await supabase.from('news').select('*').order('created_at', { ascending: false });
       if (newsError) { console.error('Error fetching news:', newsError); }
       if (newsData) {
-           setNews(newsData.map(n => ({
+           setNews(newsData.map((n: any) => ({
              id: String(n.id),
              text_ar: n.content_ar || n.title_ar,
              text_en: n.content_en || n.title_en,
@@ -398,10 +431,9 @@ const AdminInner = () => {
       }
 
       // Sectors
-      const { data: sectorsData, error: secError } = await supabase.from('sectors').select('*').order('sort_order', { ascending: true });
       if (secError) { console.error('Error fetching sectors:', secError); }
       if (sectorsData) {
-          setSectors(sectorsData.map(s => ({
+          setSectors(sectorsData.map((s: any) => ({
               id: String(s.id),
               nameAr: s.name_ar,
               nameEn: s.name_en,
@@ -413,11 +445,10 @@ const AdminInner = () => {
           })));
       }
 
-      // Analyses (Fixed from reports)
-      const { data: analysesData, error: anError } = await supabase.from('analyses').select('*').order('created_at', { ascending: false });
+      // Analyses
       if (anError) { console.error('Error fetching analyses:', anError); }
       if (analysesData) {
-          setReports(analysesData.map(a => ({
+          setReports(analysesData.map((a: any) => ({
               id: String(a.id),
               titleAr: a.title_ar,
               titleEn: a.title_en,
@@ -434,23 +465,20 @@ const AdminInner = () => {
       }
 
       // Messages
-      const { data: msgData, error: msgError } = await supabase.from('messages').select('*').order('created_at', { ascending: false });
       if (msgError) { console.error('Error fetching messages:', msgError); }
       if (msgData) {
-          setMessages(msgData.map(m => ({ id: String(m.id), ...m })));
+          setMessages(msgData.map((m: any) => ({ id: String(m.id), ...m })));
       }
 
       // Logs
-      const { data: logsData } = await supabase.from('activity_logs').select('*').order('timestamp', { ascending: false }).limit(50);
       if (logsData) {
-          setLogs(logsData.map(l => ({ ...l, id: String(l.id) })));
+          setLogs(logsData.map((l: any) => ({ ...l, id: String(l.id) })));
       }
 
       // Platform Settings
-      const { data: settingsData } = await supabase.from('platform_settings').select('*');
       if (settingsData) {
           const settingsObj = { ...siteSettings };
-          settingsData.forEach(s => {
+          settingsData.forEach((s: any) => {
               if (s.key === 'platform_status') settingsObj.isSiteActive = s.value === 'open';
               if (s.key === 'maintenance_message_ar') settingsObj.maintenanceMessageAr = s.value;
               if (s.key === 'maintenance_message_en') settingsObj.maintenanceMessageEn = s.value;
@@ -465,7 +493,7 @@ const AdminInner = () => {
       // Stats
       let visitorCount = 0;
       if (settingsData) {
-        const visitorSetting = settingsData.find(s => s.key === 'total_visitors');
+        const visitorSetting = settingsData.find((s: any) => s.key === 'total_visitors');
         if (visitorSetting) visitorCount = parseInt(visitorSetting.value as string) || 0;
       }
 
@@ -478,8 +506,8 @@ const AdminInner = () => {
       });
 
     } catch (e: any) {
-      console.error('Error fetching dashboard data:', e);
-      alert('Error fetching data: ' + (e.message || e.toString()));
+      console.error('Dashboard error:', e);
+      setFetchError(e.message || 'تعذر تحميل البيانات');
     } finally {
       setLoading(false);
     }
@@ -608,7 +636,38 @@ const AdminInner = () => {
     );
   }
 
+  if (fetchError) {
+    return (
+      <div className="min-h-screen bg-[#050A18] flex items-center justify-center p-4">
+        <div className="flex flex-col items-center justify-center gap-4 flex flex-col p-8 bg-[#0A1128] rounded-xl border border-red-500/20 text-center">
+           <AlertTriangle size={48} className="text-red-500 mb-4" />
+           <p className="text-white font-bold mb-2">تعذر تحميل البيانات، حاول تحديث الصفحة.</p>
+           <p className="text-gray-400 text-xs mb-4">{fetchError}</p>
+           <button onClick={() => window.location.reload()} className="px-6 py-2 bg-red-500/10 text-red-500 border border-red-500/50 rounded-lg hover:bg-red-500 hover:text-white transition-all font-bold">
+             تحديث
+           </button>
+        </div>
+      </div>
+    );
+  }
+
   if (!isAdmin) {
+    if (user) {
+      return (
+        <div className="min-h-screen bg-[#050A18] flex items-center justify-center p-4" dir={language === 'ar' ? 'rtl' : 'ltr'}>
+          <div className="bg-[#0A1128] p-10 rounded-[2.5rem] border border-[#1C2E5A] w-full max-w-sm shadow-2xl relative overflow-hidden flex flex-col items-center text-center">
+             <Shield className="text-red-500 mb-4 opacity-50" size={64} />
+             <p className="text-white text-xl font-black mb-4">
+               {language === 'ar' ? 'ليس لديك صلاحية الدخول للوحة التحكم' : 'You do not have permission to access the admin portal'}
+             </p>
+             <button onClick={handleLogout} className="px-6 py-2 bg-red-500/10 text-red-500 border border-red-500/50 rounded-lg hover:bg-red-500 hover:text-white transition-all font-bold">
+               {language === 'ar' ? 'تسجيل الخروج' : 'Logout'}
+             </button>
+          </div>
+        </div>
+      );
+    }
+
     return (
       <div className="min-h-screen bg-[#050A18] flex items-center justify-center p-4" dir={language === 'ar' ? 'rtl' : 'ltr'}>
         <div className="bg-[#0A1128] p-10 rounded-[2.5rem] border border-[#1C2E5A] w-full max-w-sm shadow-2xl relative overflow-hidden">
