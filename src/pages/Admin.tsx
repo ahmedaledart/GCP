@@ -43,7 +43,15 @@ class AdminErrorBoundary extends React.Component<{children: React.ReactNode, lan
         <div className="p-10 m-10 bg-red-500/10 border border-red-500 rounded-2xl text-red-500 font-bold font-mono" dir="ltr">
           <h2>Dashboard Crashed!</h2>
           <p>{this.state.error?.toString()}</p>
-          <button onClick={() => window.location.href = '/admin'} className="mt-4 px-4 py-2 bg-red-500 text-white rounded">Reload</button>
+          <button onClick={() => {
+            if (typeof (window as any).resetAppStorage === 'function') {
+              (window as any).resetAppStorage();
+            } else {
+              localStorage.clear();
+              sessionStorage.clear();
+            }
+            window.location.href = window.location.pathname + '#/admin/login';
+          }} className="mt-4 px-4 py-2 bg-red-500 text-white rounded">إصلاح وفتح المنصة</button>
         </div>
       );
     }
@@ -60,6 +68,17 @@ export const Admin = () => {
   );
 };
 
+const clearStorageKeys = () => {
+  const prefixes = ['sb-', 'supabase', 'gcp-', 'GCP_', 'auth', 'admin', 'user', 'platform'];
+  [localStorage, sessionStorage].forEach(storage => {
+    Object.keys(storage).forEach(key => {
+      if (prefixes.some(prefix => key.toLowerCase().startsWith(prefix.toLowerCase()))) {
+        storage.removeItem(key);
+      }
+    });
+  });
+};
+
 const AdminInner = () => {
   const { t, language } = useLanguage();
   const navigate = useNavigate();
@@ -71,6 +90,14 @@ const AdminInner = () => {
   const [loginPassword, setLoginPassword] = useState('');
   const [loginError, setLoginError] = useState<string | null>(null);
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
+
+  useEffect(() => {
+    const urlParams = new URLSearchParams(window.location.search);
+    if (urlParams.get('reset') === '1') {
+      clearStorageKeys();
+      window.location.search = '';
+    }
+  }, []);
 
   // Stats State
   const [stats, setStats] = useState({
@@ -124,6 +151,23 @@ const AdminInner = () => {
     setTimeout(() => setToast(null), 3000);
   };
 
+  const enforcePermission = (permissionKey: string, moduleName: string) => {
+    if (adminUser?.role === 'super_admin') return true;
+    if (adminUser && adminUser[permissionKey]) return true;
+    
+    // Also check if permissions array exists and contains the required permission (or derived names)
+    if (adminUser && Array.isArray(adminUser.permissions)) {
+      if (permissionKey === 'can_manage_prices' && (adminUser.permissions.includes('commodities') || adminUser.permissions.includes('manage_prices'))) return true;
+      if (permissionKey === 'can_manage_news' && adminUser.permissions.includes('news')) return true;
+      if (permissionKey === 'can_manage_analysis' && adminUser.permissions.includes('analyses')) return true;
+      if (permissionKey === 'can_manage_sectors' && adminUser.permissions.includes('sectors')) return true;
+      if (permissionKey === 'can_manage_admins' && adminUser.permissions.includes('admin_users')) return true;
+    }
+
+    showToast(language === 'ar' ? `ليس لديك صلاحية لإدارة ${moduleName} المحددة.` : `You don't have permission to manage ${moduleName}.`, 'error');
+    return false;
+  };
+
   useEffect(() => {
     if (!isAdmin) return;
     
@@ -153,40 +197,26 @@ const AdminInner = () => {
       const currentUser = session?.user;
       setUser(currentUser);
       
-      console.log("Auth Event:", event, "User Email:", currentUser?.email);
-      
       if (currentUser && currentUser.email) {
-        // Core Admin email check
-        const { data: adminData, error: adminError } = await supabase
+        // We will fetch admin user if logged in (mostly for persistent session refresh)
+        const { data: adminData } = await supabase
           .from('admin_users')
           .select('*')
-          .eq('email', currentUser.email)
+          .ilike('email', currentUser.email)
           .single();
-          
-        if (adminError && adminError.code !== 'PGRST116') {
-           console.error("Error searching admin_users:", adminError.message);
-        }
-
-        // Hardcoded super admin check
-        const isMasterAdmin = currentUser.email === ADMIN_EMAIL;
 
         if (adminData) {
-          console.log("Admin found in database:", adminData.email, "Status:", adminData.is_active ? 'Active' : 'Inactive');
           if (adminData.is_active) {
             setIsAdmin(true);
             setAdminUser(adminData);
           } else {
-            console.log("Admin account is inactive.");
             setIsAdmin(false);
             setAdminUser(null);
             if (event === 'SIGNED_IN') {
-              alert(language === 'ar' ? 'ليس لديك صلاحيات الوصول للمسؤول (حساب معطل)' : 'You do not have admin access permissions (Account disabled)');
               await supabase.auth.signOut();
             }
           }
-        } else if (isMasterAdmin) {
-          // Allow master admin even if not in table
-          console.log("Master admin allowed by hardcoded email.");
+        } else if (currentUser.email === ADMIN_EMAIL) {
           setIsAdmin(true);
           setAdminUser({
             email: currentUser.email,
@@ -196,13 +226,9 @@ const AdminInner = () => {
             permissions: ['*']
           });
         } else {
-          console.log("Email not found in admin_users table.");
           setIsAdmin(false);
           setAdminUser(null);
-          // Don't sign out automatically here, just show login screen
-          // Only sign out if they were explicitly trying to log in as admin and failed
-          if (event === 'SIGNED_IN' && isLoggingIn) {
-             alert(language === 'ar' ? 'ليس لديك صلاحيات الوصول للمسؤول' : 'You do not have admin access permissions');
+          if (event === 'SIGNED_IN') {
              await supabase.auth.signOut();
           }
         }
@@ -225,15 +251,11 @@ const AdminInner = () => {
           setUser(currentUser);
           
           try {
-            const { data: adminData, error: adminQueryError } = await supabase
+            const { data: adminData } = await supabase
               .from('admin_users')
               .select('*')
-              .eq('email', currentUser.email)
+              .ilike('email', currentUser.email)
               .single();
-
-            if (adminQueryError && adminQueryError.code !== 'PGRST116') {
-              console.warn('Admin query warning:', adminQueryError.message);
-            }
 
             if (adminData?.is_active) {
               setIsAdmin(true);
@@ -247,13 +269,16 @@ const AdminInner = () => {
                 can_manage_admins: true,
                 permissions: ['*']
               });
+            } else {
+              // Not admin
+              await supabase.auth.signOut();
             }
           } catch (adminErr) {
             console.error('Failed to parse admin data:', adminErr);
           }
         }
-      } catch (err) {
-        console.error('Check session error:', err);
+      } catch (e: any) {
+        console.error('Check session fatal error:', e.message);
       } finally {
         setLoading(false);
       }
@@ -475,30 +500,43 @@ const AdminInner = () => {
       setIsLoggingIn(true);
       setLoginError(null);
       
+      console.log('Login email:', loginEmail);
+      console.log('Supabase URL:', import.meta.env.VITE_SUPABASE_URL || 'https://uqqbbaylcmmtyutymqpa.supabase.co');
+      
       const { data: authData, error: authError } = await supabase.auth.signInWithPassword({
         email: loginEmail,
         password: loginPassword
       });
 
-      if (authError) throw authError;
+      if (authError) {
+        throw new Error(authError.message);
+      }
+      
+      console.log('Login success:', authData.user?.email);
       
       const { data: adminData } = await supabase
         .from('admin_users')
         .select('*')
-        .eq('email', authData.user?.email)
-        .eq('is_active', true)
+        .ilike('email', loginEmail)
         .single();
         
-      if (!adminData && authData.user?.email !== ADMIN_EMAIL) {
-        setLoginError(t('noAdminAccess'));
+      console.log('Admin profile:', adminData);
+
+      if (!adminData) {
+        setLoginError('ليس لديك صلاحية الدخول للوحة التحكم');
         await supabase.auth.signOut();
+        return;
       }
+      
+      if (adminData.is_active === false) {
+        setLoginError('تم تعطيل حسابك الإداري');
+        await supabase.auth.signOut();
+        return;
+      }
+      
+      // User is valid and active, onAuthStateChange will handle transition to dashboard
     } catch (error: any) {
-      let msg = error.message;
-      if (error.status === 400) {
-        msg = language === 'ar' ? 'البريد أو كلمة المرور غير صحيحة' : 'Invalid email or password';
-      }
-      setLoginError(msg);
+      setLoginError(error.message);
     } finally {
       setIsLoggingIn(false);
     }
@@ -604,6 +642,25 @@ const AdminInner = () => {
                 <span className="uppercase tracking-widest text-sm">{language === 'ar' ? 'تسجيل الدخول' : 'Sign In'}</span>
               )}
             </button>
+            <button
+              type="button"
+              onClick={() => {
+                const prefixes = ['sb-', 'supabase', 'gcp-', 'GCP_', 'auth', 'admin', 'user', 'platform'];
+                [localStorage, sessionStorage].forEach(storage => {
+                  Object.keys(storage).forEach(key => {
+                    if (prefixes.some(prefix => key.toLowerCase().startsWith(prefix.toLowerCase()))) {
+                      storage.removeItem(key);
+                    }
+                  });
+                });
+                window.location.href = 'https://ahmedaledart.github.io/GCP/#/admin/login';
+                window.location.reload();
+              }}
+              className="w-full h-12 mt-4 flex items-center justify-center gap-2 bg-red-500/10 hover:bg-red-500/20 text-red-500 font-bold rounded-2xl transition-all text-sm border border-red-500/20"
+            >
+              <AlertTriangle size={16} />
+              إصلاح مشكلة الدخول
+            </button>
           </form>
 
           {user && (
@@ -649,6 +706,7 @@ const AdminInner = () => {
   };
 
   const processExcelImport = async () => {
+    if (!enforcePermission('can_manage_prices', 'الأسعار')) return;
     const { file } = importConfig;
     if (!file) return;
 
@@ -1119,10 +1177,10 @@ const AdminInner = () => {
               {language === 'ar' ? 'الرئيسية' : 'Core'}
             </p>
             <NavItem active={activeTab === 'dashboard'} icon={<LayoutDashboard />} label={t('dashboard' as any)} onClick={() => { setActiveTab('dashboard'); setIsMobileMenuOpen(false); }} language={language} />
-            {(adminUser?.role === 'super_admin' || adminUser?.permissions?.includes('commodities')) && (
+            {(adminUser?.role === 'super_admin' || adminUser?.can_manage_prices) && (
               <NavItem active={activeTab === 'commodities'} icon={<Database />} label={language === 'ar' ? 'إدارة السلع والأسعار' : 'Commodities'} onClick={() => { setActiveTab('commodities'); setIsMobileMenuOpen(false); }} language={language} />
             )}
-            {(adminUser?.role === 'super_admin' || adminUser?.permissions?.includes('sectors')) && (
+            {(adminUser?.role === 'super_admin' || adminUser?.can_manage_sectors) && (
               <NavItem active={activeTab === 'sectors'} icon={<Briefcase />} label={language === 'ar' ? 'إدارة القطاعات' : 'Sectors'} onClick={() => { setActiveTab('sectors'); setIsMobileMenuOpen(false); }} language={language} />
             )}
           </div>
@@ -1132,13 +1190,13 @@ const AdminInner = () => {
               <span className="w-1 h-1 rounded-full bg-[#D4AF37]"></span>
               {language === 'ar' ? 'المحتوى' : 'Content'}
             </p>
-            {(adminUser?.role === 'super_admin' || adminUser?.permissions?.includes('news')) && (
+            {(adminUser?.role === 'super_admin' || adminUser?.can_manage_news) && (
               <NavItem active={activeTab === 'news'} icon={<Newspaper />} label={language === 'ar' ? 'إدارة الأخبار' : 'News'} onClick={() => { setActiveTab('news'); setIsMobileMenuOpen(false); }} language={language} />
             )}
-            {(adminUser?.role === 'super_admin' || adminUser?.permissions?.includes('analyses')) && (
+            {(adminUser?.role === 'super_admin' || adminUser?.can_manage_analysis) && (
               <NavItem active={activeTab === 'analyses'} icon={<FileBarChart />} label={language === 'ar' ? 'إدارة التحليلات' : 'Analyses'} onClick={() => { setActiveTab('analyses'); setIsMobileMenuOpen(false); }} language={language} />
             )}
-            {(adminUser?.role === 'super_admin' || adminUser?.permissions?.includes('messages') || adminUser?.role === 'admin') && (
+            {(adminUser?.role === 'super_admin' || adminUser?.can_manage_admins || adminUser?.can_manage_prices) && (
               <NavItem active={activeTab === 'messages'} icon={<MessageSquare />} label={language === 'ar' ? 'صندوق الرسائل' : 'Messages'} onClick={() => { setActiveTab('messages'); setIsMobileMenuOpen(false); }} language={language} >
                 {messages.filter(m => !m.is_read).length > 0 && (
                   <span className="bg-red-500 text-white text-[9px] font-bold px-2 py-0.5 rounded-full ml-auto">
@@ -1147,10 +1205,10 @@ const AdminInner = () => {
                 )}
               </NavItem>
             )}
-            {(adminUser?.role === 'super_admin' || adminUser?.permissions?.includes('admin_users')) && (
+            {(adminUser?.role === 'super_admin' || adminUser?.can_manage_admins) && (
               <NavItem active={activeTab === 'admin_users'} icon={<Shield />} label={language === 'ar' ? 'إدارة الأدمن' : 'Admin Users'} onClick={() => { setActiveTab('admin_users'); setIsMobileMenuOpen(false); }} language={language} />
             )}
-            {(adminUser?.role === 'super_admin' || adminUser?.can_manage_admins || adminUser?.permissions?.includes('admin_users')) && (
+            {(adminUser?.role === 'super_admin' || adminUser?.can_manage_admins) && (
               <NavItem active={activeTab === 'platform_users'} icon={<Users />} label={language === 'ar' ? 'إدارة مستخدمي المنصة' : 'Platform Users'} onClick={() => { setActiveTab('platform_users'); setIsMobileMenuOpen(false); }} language={language} />
             )}
             {(adminUser?.role === 'super_admin' || adminUser?.can_manage_admins) && (
@@ -1163,7 +1221,7 @@ const AdminInner = () => {
               <span className="w-1 h-1 rounded-full bg-[#D4AF37]"></span>
               {language === 'ar' ? 'أدوات' : 'Tools'}
             </p>
-            {(adminUser?.role === 'super_admin' || adminUser?.permissions?.includes('commodities')) && (
+            {(adminUser?.role === 'super_admin' || adminUser?.can_manage_prices) && (
               <>
                 <NavItem active={activeTab === 'import_csv'} icon={<FileSpreadsheet />} label={language === 'ar' ? 'استيراد CSV' : 'Import CSV'} onClick={() => { setActiveTab('import_csv'); setIsMobileMenuOpen(false); }} language={language} />
                 <NavItem active={activeTab === 'import_excel'} icon={<FileSpreadsheet />} label={language === 'ar' ? 'استيراد Excel' : 'Import Excel'} onClick={() => { setActiveTab('import_excel'); setIsMobileMenuOpen(false); }} language={language} />
@@ -1173,7 +1231,7 @@ const AdminInner = () => {
           </div>
 
           <div className="pt-6 border-t border-[#1C2E5A]/50">
-            {(adminUser?.role === 'super_admin' || adminUser?.permissions?.includes('settings')) && (
+            {(adminUser?.role === 'super_admin' || adminUser?.can_manage_admins) && (
                 <>
                 <NavItem active={activeTab === 'settings'} icon={<Settings />} label={language === 'ar' ? 'إعدادات المنصة' : 'Settings'} onClick={() => { setActiveTab('settings'); setIsMobileMenuOpen(false); }} language={language} />
                 <NavItem active={activeTab === 'platform_status'} icon={<ShieldAlert />} label={language === 'ar' ? 'فتح وإغلاق المنصة' : 'Platform Status'} onClick={() => { setActiveTab('platform_status'); setIsMobileMenuOpen(false); }} language={language} />
@@ -1290,14 +1348,17 @@ const AdminInner = () => {
                         </button>
                       </div>
                       <button 
-                        onClick={() => setEditingItem({ 
-                          type: 'commodity', 
-                          data: { 
-                            nameAr: '', nameEn: '', symbol: '', sectorAr: sectors[0]?.nameAr || 'الطاقة', sectorEn: sectors[0]?.nameEn || 'Energy', 
-                            price: 0, changePercent: 0, trend: 'neutral', 
-                            high: 0, low: 0, unit: '', source: '', isVisible: true
-                          } 
-                        })}
+                        onClick={() => {
+                          if (!enforcePermission('can_manage_prices', 'الأسعار')) return;
+                          setEditingItem({ 
+                            type: 'commodity', 
+                            data: { 
+                              nameAr: '', nameEn: '', symbol: '', sectorAr: sectors[0]?.nameAr || 'الطاقة', sectorEn: sectors[0]?.nameEn || 'Energy', 
+                              price: 0, changePercent: 0, trend: 'neutral', 
+                              high: 0, low: 0, unit: '', source: '', isVisible: true
+                            } 
+                          })
+                        }}
                         className="flex items-center gap-2 bg-[#D4AF37] text-[#0A1128] px-5 py-3 rounded-xl font-black hover:bg-[#E5C158] transition-all text-[10px] uppercase tracking-widest shadow-xl shadow-[#D4AF37]/10"
                       >
                         <Plus size={18} /> {t('addNew')}
@@ -1377,6 +1438,7 @@ const AdminInner = () => {
                                 <div className="flex items-center justify-center gap-2">
                                   <button 
                                     onClick={async () => {
+                                      if (!enforcePermission('can_manage_prices', 'الأسعار')) return;
                                       try {
                                         const { error } = await supabase.from('commodities').update({ is_visible: !item.isVisible }).eq('id', item.id);
                                         if (error) throw error;
@@ -1392,6 +1454,7 @@ const AdminInner = () => {
                                   </button>
                                   <button onClick={() => setEditingItem({ type: 'commodity', data: item })} className="w-10 h-10 flex items-center justify-center text-blue-400 hover:bg-blue-400/10 rounded-xl transition-all border border-transparent hover:border-blue-400/20"><Settings size={18} /></button>
                                   <button onClick={async () => { 
+                                    if (!enforcePermission('can_manage_prices', 'الأسعار')) return;
                                     if(confirm(language === 'ar' ? 'هل أنت متأكد؟' : 'Are you sure?')) { 
                                       try {
                                         const { error } = await supabase.from('commodities').delete().eq('id', item.id);
@@ -1444,10 +1507,13 @@ const AdminInner = () => {
                       </div>
                     </div>
                     <button 
-                      onClick={() => setEditingItem({ 
-                        type: 'news', 
-                        data: { text_ar: '', text_en: '', active: true } 
-                      })}
+                      onClick={() => {
+                        if (!enforcePermission('can_manage_news', 'الأخبار')) return;
+                        setEditingItem({ 
+                          type: 'news', 
+                          data: { text_ar: '', text_en: '', active: true } 
+                        })
+                      }}
                       className="flex items-center gap-2 bg-[#D4AF37] text-[#0A1128] px-6 py-4 rounded-xl font-black hover:bg-[#E5C158] transition-all text-[10px] uppercase tracking-widest shadow-xl shadow-[#D4AF37]/10"
                     >
                       <Plus size={18} /> {t('addNews')}
@@ -1478,6 +1544,7 @@ const AdminInner = () => {
                          <div className="flex items-center gap-4 mr-4">
                            <button 
                              onClick={async () => {
+                               if (!enforcePermission('can_manage_news', 'الأخبار')) return;
                                try {
                                  const newIsVisible = !item.is_visible;
                                  const { error } = await supabase.from('news').update({ is_visible: newIsVisible }).eq('id', item.id);
@@ -1492,9 +1559,13 @@ const AdminInner = () => {
                            >
                              {item.is_visible ? <ToggleRight size={28} /> : <ToggleLeft size={28} />}
                            </button>
-                           <button onClick={() => setEditingItem({ type: 'news', data: item })} className="w-12 h-12 flex items-center justify-center bg-[#121E3D] text-blue-400 border border-[#1C2E5A] rounded-2xl hover:border-blue-400/30 transition-all"><Settings size={18} /></button>
+                           <button onClick={() => {
+                             if (!enforcePermission('can_manage_news', 'الأخبار')) return;
+                             setEditingItem({ type: 'news', data: item })
+                           }} className="w-12 h-12 flex items-center justify-center bg-[#121E3D] text-blue-400 border border-[#1C2E5A] rounded-2xl hover:border-blue-400/30 transition-all"><Settings size={18} /></button>
                            <button 
                               onClick={async () => {
+                               if (!enforcePermission('can_manage_news', 'الأخبار')) return;
                                if(confirm(language === 'ar' ? 'هل أنت متأكد؟' : 'Are you sure?')) {
                                  try {
                                    const { error } = await supabase.from('news').delete().eq('id', item.id);
@@ -1532,10 +1603,13 @@ const AdminInner = () => {
                       </div>
                     </div>
                     <button 
-                      onClick={() => setEditingItem({ 
-                        type: 'analysis', 
-                        data: { titleAr: '', titleEn: '', contentAr: '', contentEn: '', status: 'published', is_visible: true, analysis_type: 'technical' } 
-                      })}
+                      onClick={() => {
+                        if (!enforcePermission('can_manage_analysis', 'التحليلات')) return;
+                        setEditingItem({ 
+                          type: 'analysis', 
+                          data: { titleAr: '', titleEn: '', contentAr: '', contentEn: '', status: 'published', is_visible: true, analysis_type: 'technical' } 
+                        })
+                      }}
                       className="flex items-center gap-2 bg-[#D4AF37] text-[#0A1128] px-6 py-4 rounded-xl font-black hover:bg-[#E5C158] transition-all text-[10px] uppercase tracking-widest shadow-xl shadow-[#D4AF37]/10"
                     >
                       <Plus size={18} /> {language === 'ar' ? 'تحليل جديد' : 'New Analysis'}
@@ -1574,8 +1648,12 @@ const AdminInner = () => {
                             {new Date(report.publishedAt).toLocaleDateString()}
                           </div>
                           <div className="flex gap-2">
-                            <button onClick={() => setEditingItem({ type: 'analysis', data: report })} className="w-11 h-11 flex items-center justify-center bg-[#121E3D] text-blue-400 border border-[#1C2E5A] rounded-xl hover:border-blue-400/30 transition-all"><Settings size={18} /></button>
+                            <button onClick={() => {
+                              if (!enforcePermission('can_manage_analysis', 'التحليلات')) return;
+                              setEditingItem({ type: 'analysis', data: report })
+                            }} className="w-11 h-11 flex items-center justify-center bg-[#121E3D] text-blue-400 border border-[#1C2E5A] rounded-xl hover:border-blue-400/30 transition-all"><Settings size={18} /></button>
                             <button onClick={async () => { 
+                               if (!enforcePermission('can_manage_analysis', 'التحليلات')) return;
                                if(confirm(language === 'ar' ? 'هل أنت متأكد؟' : 'Are you sure?')) {
                                  try {
                                    const { error } = await supabase.from('analyses').delete().eq('id', report.id);
@@ -2107,12 +2185,12 @@ const AdminInner = () => {
                   </div>
                 </div>
               )}
-              {activeTab === 'sectors' && <SectorsTab />}
+              {activeTab === 'sectors' && <SectorsTab adminUser={adminUser} />}
               {activeTab === 'dataSources' && <DataSourcesTab />}
               {activeTab === 'exchangeRates' && <ExchangeRatesTab />}
-              {activeTab === 'admin_users' && <AdminUsersTab currentUser={user} />}
-              {activeTab === 'platform_users' && (adminUser?.role === 'super_admin' || adminUser?.can_manage_admins || adminUser?.permissions?.includes('admin_users')) && <PlatformUsersTab />}
-              {activeTab === 'platform_settings' && (adminUser?.role === 'super_admin' || adminUser?.can_manage_admins) && <PlatformSettingsTab />}
+              {activeTab === 'admin_users' && <AdminUsersTab currentUser={user} adminUser={adminUser} />}
+              {activeTab === 'platform_users' && (adminUser?.role === 'super_admin' || adminUser?.can_manage_admins) && <PlatformUsersTab adminUser={adminUser} />}
+              {activeTab === 'platform_settings' && (adminUser?.role === 'super_admin' || adminUser?.can_manage_admins) && <PlatformSettingsTab adminUser={adminUser} />}
               {activeTab === 'legal' && <LegalTab />}
               {activeTab === 'backup' && <BackupTab />}
               {activeTab === 'interface' && <InterfaceTab />}
@@ -2358,6 +2436,9 @@ const AdminInner = () => {
 
                   <div className="flex gap-4 mt-12 bg-[#121E3D]/50 p-6 -mx-10 -mb-10 border-t border-[#1C2E5A]">
                     <button onClick={async () => {
+                      if (editingItem.type === 'commodity' && !enforcePermission('can_manage_prices', 'الأسعار')) return;
+                      if (editingItem.type === 'news' && !enforcePermission('can_manage_news', 'الأخبار')) return;
+                      if ((editingItem.type === 'report' || editingItem.type === 'analysis') && !enforcePermission('can_manage_analysis', 'التحليلات')) return;
                       console.log('Save button clicked');
                       const { id, ...data } = editingItem.data;
                       let collectionName = '';

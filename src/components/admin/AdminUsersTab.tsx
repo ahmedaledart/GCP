@@ -4,12 +4,26 @@ import { Users, Plus, Save, Trash2, Edit, Shield, Mail, CheckCircle2, XCircle } 
 import { supabase } from '../../lib/supabase';
 import { motion } from 'motion/react';
 
-export const AdminUsersTab = ({ currentUser }: { currentUser: any }) => {
+export const AdminUsersTab = ({ currentUser, adminUser }: { currentUser: any, adminUser?: any }) => {
   const { language } = useLanguage();
   const [users, setUsers] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [formData, setFormData] = useState({ email: '', role: 'editor', permissions: [] as string[], is_active: true });
+
+  const enforcePermission = (permissionKey: string, moduleName: string) => {
+    if (adminUser?.role === 'super_admin') return true;
+    if (adminUser && adminUser[permissionKey]) return true;
+    if (adminUser && Array.isArray(adminUser.permissions)) {
+      if (permissionKey === 'can_manage_prices' && (adminUser.permissions.includes('commodities') || adminUser.permissions.includes('manage_prices'))) return true;
+      if (permissionKey === 'can_manage_news' && adminUser.permissions.includes('news')) return true;
+      if (permissionKey === 'can_manage_analysis' && adminUser.permissions.includes('analyses')) return true;
+      if (permissionKey === 'can_manage_sectors' && adminUser.permissions.includes('sectors')) return true;
+      if (permissionKey === 'can_manage_admins' && (adminUser.permissions.includes('admin_users') || adminUser.permissions.includes('settings'))) return true;
+    }
+    alert(language === 'ar' ? `ليس لديك صلاحية لإدارة ${moduleName} المحددة.` : `You don't have permission to manage ${moduleName}.`);
+    return false;
+  };
 
   const roles = [
     { id: 'super_admin', labelAr: 'مدير عام', labelEn: 'Super Admin' },
@@ -39,6 +53,7 @@ export const AdminUsersTab = ({ currentUser }: { currentUser: any }) => {
   };
 
   const handleSave = async () => {
+    if (!enforcePermission('can_manage_admins', 'المشرفين')) return;
     if (!formData.email) return;
     
     try {
@@ -60,6 +75,7 @@ export const AdminUsersTab = ({ currentUser }: { currentUser: any }) => {
   };
 
   const handleDelete = async (id: string) => {
+    if (!enforcePermission('can_manage_admins', 'المشرفين')) return;
     if (confirm(language === 'ar' ? 'هل أنت متأكد من الحذف؟' : 'Are you sure you want to delete?')) {
       try {
         const { error } = await supabase.from('admin_users').delete().eq('id', id);
@@ -88,7 +104,10 @@ export const AdminUsersTab = ({ currentUser }: { currentUser: any }) => {
           </div>
         </div>
         {!editingId && (
-          <button onClick={() => setEditingId('new')} className="flex items-center gap-2 bg-[#D4AF37] text-[#0A1128] px-6 py-3 rounded-xl font-black hover:bg-[#E5C158] transition-all shadow-lg shadow-[#D4AF37]/20">
+          <button onClick={() => {
+            if (!enforcePermission('can_manage_admins', 'المشرفين')) return;
+            setEditingId('new')
+          }} className="flex items-center gap-2 bg-[#D4AF37] text-[#0A1128] px-6 py-3 rounded-xl font-black hover:bg-[#E5C158] transition-all shadow-lg shadow-[#D4AF37]/20">
             <Plus size={20} /> {language === 'ar' ? 'إضافة مستخدم' : 'Add User'}
           </button>
         )}
@@ -207,7 +226,10 @@ export const AdminUsersTab = ({ currentUser }: { currentUser: any }) => {
                        </td>
                        <td className="p-6">
                          <div className="flex items-center gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
-                            <button onClick={() => {setEditingId(u.id); setFormData({ email: u.email, role: u.role, permissions: u.permissions || [], is_active: u.is_active });}} className="w-8 h-8 rounded-lg bg-[#1C2E5A] flex items-center justify-center text-gray-400 hover:text-white transition-colors">
+                            <button onClick={() => {
+                              if (!enforcePermission('can_manage_admins', 'المشرفين')) return;
+                              setEditingId(u.id); setFormData({ email: u.email, role: u.role, permissions: u.permissions || [], is_active: u.is_active });
+                            }} className="w-8 h-8 rounded-lg bg-[#1C2E5A] flex items-center justify-center text-gray-400 hover:text-white transition-colors">
                               <Edit size={14} />
                             </button>
                             {u.email !== currentUser?.email && (

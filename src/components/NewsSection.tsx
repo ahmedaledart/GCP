@@ -1,5 +1,4 @@
 import React, { useState, useEffect } from 'react';
-import { marketNews as mockMarketNews } from '../data/mockData';
 import { Newspaper, ChevronLeft, ChevronRight, AlertTriangle, Loader2, ExternalLink } from 'lucide-react';
 import { useLanguage } from '../context/LanguageContext';
 import { GoogleGenAI, Type } from '@google/genai';
@@ -93,16 +92,7 @@ export const NewsSection = () => {
       console.error('Failed to fetch real news:', err);
       setError(true);
       setMarketInsight(language === 'ar' ? 'بوصلة السوق: تشهد الأسواق تقلبات نتيجة التوترات الجيوسياسية الحالية وتغيرات مستويات الطلب العالمي.' : 'Market Compass: Markets are experiencing volatility due to current geopolitical tensions and shifts in global demand levels.');
-      setNews(mockMarketNews.map(mock => ({
-        id: mock.id.toString(),
-        title: language === 'ar' ? mock.titleAr : mock.titleEn,
-        summary: language === 'ar' ? 'تحديثات السوق المباشرة' : 'Live market updates',
-        source: language === 'ar' ? 'أخبار السوق' : 'Market News',
-        time: language === 'ar' ? mock.timeAr : mock.timeEn,
-        url: '#',
-        isAlert: mock.typeAr === 'عاجل',
-        sector: mock.id === 1 ? 'metals' : mock.id === 2 ? 'energy' : mock.id === 3 ? 'agriculture' : 'general'
-      })));
+      setNews([]);
     } finally {
       setLoading(false);
     }

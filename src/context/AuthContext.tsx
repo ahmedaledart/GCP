@@ -26,99 +26,89 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
+    let isMounted = true;
+    
     const initAuth = async () => {
       try {
-        // Create a timeout promise
-        const timeoutPromise = new Promise((_, reject) => 
-          setTimeout(() => reject(new Error('Auth request timed out')), 5000)
-        );
-        
-        // Race the getSession against the timeout
-        const { data: { session }, error } = await Promise.race([
-          supabase.auth.getSession(),
-          timeoutPromise
-        ]) as any;
+        const { data: { session }, error } = await supabase.auth.getSession();
 
         if (error) {
           console.warn('Session error:', error.message);
-          try { await supabase.auth.signOut(); } catch (e) {}
+          // If getSession fails, just proceed as guest
         }
         
         const currentUser = session?.user ?? null;
-        setUser(currentUser);
+        if (isMounted) setUser(currentUser);
         
         if (currentUser) {
-          await fetchPlatformUser(currentUser.id);
+          await fetchPlatformUser(currentUser.id, isMounted);
         } else {
-          setPlatformUser(null);
+          if (isMounted) setPlatformUser(null);
         }
       } catch (err) {
         console.error('Auth initialization error:', err);
-        try { await supabase.auth.signOut(); } catch (e) {}
-        setUser(null);
-        setPlatformUser(null);
+        if (isMounted) {
+          setUser(null);
+          setPlatformUser(null);
+        }
       } finally {
-        setLoading(false);
+        if (isMounted) setLoading(false);
       }
     };
 
     initAuth();
 
-    // Auth listener
     const { data: { subscription } } = supabase.auth.onAuthStateChange(async (event, session) => {
+      if (!isMounted) return;
       try {
         const currentUser = session?.user ?? null;
         setUser(currentUser);
+        
         if (currentUser) {
-          await fetchPlatformUser(currentUser.id);
+          await fetchPlatformUser(currentUser.id, isMounted);
         } else {
           setPlatformUser(null);
         }
       } catch (err) {
         console.error('Auth state change error:', err);
-      } finally {
-        setLoading(false);
       }
     });
 
     return () => {
+      isMounted = false;
       subscription.unsubscribe();
     };
   }, []);
 
-  const fetchPlatformUser = async (userId: string) => {
+  const fetchPlatformUser = async (userId: string, isMounted: boolean) => {
     try {
-      const timeoutPromise = new Promise((_, reject) => 
-        setTimeout(() => reject(new Error('Platform user fetch timed out')), 5000)
-      );
-
-      const { data, error } = await Promise.race([
-        supabase
-          .from('platform_users')
-          .select('*')
-          .eq('auth_user_id', userId)
-          .single(),
-        timeoutPromise
-      ]) as any;
+      const { data, error } = await supabase
+        .from('platform_users')
+        .select('*')
+        .eq('auth_user_id', userId)
+        .single();
 
       if (error) {
         console.warn('Platform user fetch warning:', error.message);
-        setPlatformUser(null);
-        try { await supabase.auth.signOut(); } catch (e) {}
+        if (isMounted) setPlatformUser(null);
       } else {
-        setPlatformUser(data);
+        if (isMounted) setPlatformUser(data);
       }
     } catch (err) {
       console.error('Error fetching platform user:', err);
-      setPlatformUser(null);
-      try { await supabase.auth.signOut(); } catch (e) {}
-    } finally {
-      setLoading(false);
+      if (isMounted) setPlatformUser(null);
     }
   };
 
   const signOut = async () => {
-    await supabase.auth.signOut();
+    try {
+      await supabase.auth.signOut();
+    } catch (err) {
+      console.error('Signout error:', err);
+    } finally {
+      setUser(null);
+      setPlatformUser(null);
+    }
   };
 
   const getStatusMessage = () => {
@@ -168,3 +158,4 @@ export const useAuth = () => {
   }
   return context;
 };
+

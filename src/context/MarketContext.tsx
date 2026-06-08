@@ -1,6 +1,6 @@
 import React, { createContext, useContext, useEffect, useState } from 'react';
 import { supabase } from '../lib/supabase';
-import { Commodity, commoditiesData as mockData } from '../data/mockData';
+import { Commodity } from '../data/mockData';
 
 interface MarketContextType {
   data: Commodity[];
@@ -20,7 +20,7 @@ interface MarketContextType {
 }
 
 const MarketContext = createContext<MarketContextType>({ 
-  data: mockData, 
+  data: [], 
   news: [],
   analyses: [],
   history: [],
@@ -29,7 +29,7 @@ const MarketContext = createContext<MarketContextType>({
   error: null,
   lastUpdate: null,
   latency: null,
-  isMockData: true,
+  isMockData: false,
   fetchCommodities: async () => {},
   fetchNews: async () => {},
   fetchAnalyses: async () => {},
@@ -127,8 +127,8 @@ export const MarketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       if (data.length === 0) {
         setError(err.message || 'فشل الاتصال بـ Supabase.');
         setConnected(false);
-        setIsMockData(true);
-        setData(mockData);
+        setIsMockData(false);
+        setData([]);
       }
     } finally {
       setLoading(false);

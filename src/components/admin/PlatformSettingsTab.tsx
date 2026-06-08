@@ -8,11 +8,25 @@ import {
 } from 'lucide-react';
 import { motion } from 'motion/react';
 
-export const PlatformSettingsTab = () => {
+export const PlatformSettingsTab = ({ adminUser }: { adminUser?: any }) => {
   const { language } = useLanguage();
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState<{ type: 'success' | 'error', text: string } | null>(null);
+
+  const enforcePermission = (permissionKey: string, moduleName: string) => {
+    if (adminUser?.role === 'super_admin') return true;
+    if (adminUser && adminUser[permissionKey]) return true;
+    if (adminUser && Array.isArray(adminUser.permissions)) {
+      if (permissionKey === 'can_manage_prices' && (adminUser.permissions.includes('commodities') || adminUser.permissions.includes('manage_prices'))) return true;
+      if (permissionKey === 'can_manage_news' && adminUser.permissions.includes('news')) return true;
+      if (permissionKey === 'can_manage_analysis' && adminUser.permissions.includes('analyses')) return true;
+      if (permissionKey === 'can_manage_sectors' && adminUser.permissions.includes('sectors')) return true;
+      if (permissionKey === 'can_manage_admins' && (adminUser.permissions.includes('admin_users') || adminUser.permissions.includes('settings'))) return true;
+    }
+    alert(language === 'ar' ? `ليس لديك صلاحية لإدارة ${moduleName} المحددة.` : `You don't have permission to manage ${moduleName}.`);
+    return false;
+  };
   
   const [formData, setFormData] = useState<Record<string, string>>({
     platform_name_ar: '',
@@ -67,6 +81,7 @@ export const PlatformSettingsTab = () => {
 
   const handleSave = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (!enforcePermission('can_manage_admins', 'الإعدادات')) return;
     setSaving(true);
     setMessage(null);
 

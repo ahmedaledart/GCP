@@ -6,10 +6,24 @@ import {
 } from 'lucide-react';
 import { supabase } from '../../lib/supabase';
 
-export const SectorsTab = () => {
+export const SectorsTab = ({ adminUser }: { adminUser?: any }) => {
   const { language, t } = useLanguage();
   const [sectors, setSectors] = useState<any[]>([]);
   const [editingSector, setEditingSector] = useState<any>(null);
+
+  const enforcePermission = (permissionKey: string, moduleName: string) => {
+    if (adminUser?.role === 'super_admin') return true;
+    if (adminUser && adminUser[permissionKey]) return true;
+    if (adminUser && Array.isArray(adminUser.permissions)) {
+      if (permissionKey === 'can_manage_prices' && (adminUser.permissions.includes('commodities') || adminUser.permissions.includes('manage_prices'))) return true;
+      if (permissionKey === 'can_manage_news' && adminUser.permissions.includes('news')) return true;
+      if (permissionKey === 'can_manage_analysis' && adminUser.permissions.includes('analyses')) return true;
+      if (permissionKey === 'can_manage_sectors' && adminUser.permissions.includes('sectors')) return true;
+      if (permissionKey === 'can_manage_admins' && adminUser.permissions.includes('admin_users')) return true;
+    }
+    alert(language === 'ar' ? `ليس لديك صلاحية لإدارة ${moduleName} المحددة.` : `You don't have permission to manage ${moduleName}.`);
+    return false;
+  };
 
   const fetchSectors = async () => {
     const { data } = await supabase.from('sectors').select('*').order('sort_order', { ascending: true });
@@ -30,6 +44,7 @@ export const SectorsTab = () => {
 
   const handleSave = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (!enforcePermission('can_manage_sectors', 'القطاعات')) return;
     const { id, ...data } = editingSector;
     
     try {
@@ -46,6 +61,7 @@ export const SectorsTab = () => {
   };
 
   const handleDelete = async (id: any) => {
+    if (!enforcePermission('can_manage_sectors', 'القطاعات')) return;
     if (confirm(language === 'ar' ? 'هل أنت متأكد؟' : 'Are you sure?')) {
       await supabase.from('sectors').delete().eq('id', id);
       fetchSectors();
@@ -53,6 +69,7 @@ export const SectorsTab = () => {
   };
 
   const handleToggle = async (id: any, currentStatus: boolean) => {
+    if (!enforcePermission('can_manage_sectors', 'القطاعات')) return;
     await supabase.from('sectors').update({ is_visible: !currentStatus }).eq('id', id);
     fetchSectors();
   };
@@ -64,7 +81,10 @@ export const SectorsTab = () => {
           <Briefcase className="text-[#D4AF37]" size={32} />
           {language === 'ar' ? 'القطاعات' : 'Sectors'}
         </h2>
-        <button onClick={() => setEditingSector({ name_ar: '', name_en: '', code: '', icon: 'Briefcase', is_visible: true, status: 'active', sort_order: sectors.length })} className="bg-[#D4AF37] text-[#0A1128] px-6 py-3 rounded-xl font-black">
+        <button onClick={() => {
+          if (!enforcePermission('can_manage_sectors', 'القطاعات')) return;
+          setEditingSector({ name_ar: '', name_en: '', code: '', icon: 'Briefcase', is_visible: true, status: 'active', sort_order: sectors.length })
+        }} className="bg-[#D4AF37] text-[#0A1128] px-6 py-3 rounded-xl font-black">
           {language === 'ar' ? 'إضافة قطاع' : 'Add Sector'}
         </button>
       </div>
@@ -122,7 +142,10 @@ export const SectorsTab = () => {
                   </button>
                 </td>
                 <td className="p-6 text-right rtl:text-left flex items-center gap-4 justify-end">
-                  <button onClick={() => setEditingSector(sector)} className="text-gray-500 hover:text-[#D4AF37]"><Edit size={18} /></button>
+                  <button onClick={() => {
+                    if (!enforcePermission('can_manage_sectors', 'القطاعات')) return;
+                    setEditingSector(sector);
+                  }} className="text-gray-500 hover:text-[#D4AF37]"><Edit size={18} /></button>
                   <button onClick={() => handleDelete(sector.id)} className="text-gray-500 hover:text-red-500 transition-colors">
                     <Trash2 size={18} />
                   </button>

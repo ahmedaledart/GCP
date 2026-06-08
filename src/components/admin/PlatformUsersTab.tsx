@@ -8,12 +8,26 @@ import {
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 
-export const PlatformUsersTab = () => {
+export const PlatformUsersTab = ({ adminUser }: { adminUser?: any }) => {
   const { language } = useLanguage();
   const [users, setUsers] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
   const [statusFilter, setStatusFilter] = useState('all');
+
+  const enforcePermission = (permissionKey: string, moduleName: string) => {
+    if (adminUser?.role === 'super_admin') return true;
+    if (adminUser && adminUser[permissionKey]) return true;
+    if (adminUser && Array.isArray(adminUser.permissions)) {
+      if (permissionKey === 'can_manage_prices' && (adminUser.permissions.includes('commodities') || adminUser.permissions.includes('manage_prices'))) return true;
+      if (permissionKey === 'can_manage_news' && adminUser.permissions.includes('news')) return true;
+      if (permissionKey === 'can_manage_analysis' && adminUser.permissions.includes('analyses')) return true;
+      if (permissionKey === 'can_manage_sectors' && adminUser.permissions.includes('sectors')) return true;
+      if (permissionKey === 'can_manage_admins' && (adminUser.permissions.includes('admin_users') || adminUser.permissions.includes('settings'))) return true;
+    }
+    alert(language === 'ar' ? `ليس لديك صلاحية لإدارة ${moduleName} المحددة.` : `You don't have permission to manage ${moduleName}.`);
+    return false;
+  };
 
   const fetchUsers = async () => {
     try {
@@ -38,6 +52,7 @@ export const PlatformUsersTab = () => {
   }, []);
 
   const handleUpdateStatus = async (auth_user_id: string, status: string) => {
+    if (!enforcePermission('can_manage_admins', 'مستخدمي المنصة')) return;
     try {
       const updates: any = { approval_status: status, updated_at: new Date().toISOString() };
       if (status === 'approved') {
@@ -63,6 +78,7 @@ export const PlatformUsersTab = () => {
   };
 
   const handleToggleActive = async (auth_user_id: string, isActive: boolean) => {
+    if (!enforcePermission('can_manage_admins', 'مستخدمي المنصة')) return;
     try {
       const payload = { is_active: isActive, updated_at: new Date().toISOString() };
       console.log('Toggling active status. Payload:', payload, 'auth_user_id:', auth_user_id);
@@ -80,6 +96,7 @@ export const PlatformUsersTab = () => {
   };
 
   const handleDeleteUser = async (auth_user_id: string) => {
+    if (!enforcePermission('can_manage_admins', 'مستخدمي المنصة')) return;
     if (!confirm(language === 'ar' ? 'هل أنت متأكد من حذف هذا المستخدم؟' : 'Are you sure you want to delete this user?')) return;
     try {
       console.log('Deleting platform user. auth_user_id:', auth_user_id);

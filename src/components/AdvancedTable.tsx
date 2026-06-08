@@ -14,7 +14,21 @@ import { LineChart, Line, ResponsiveContainer, YAxis, Tooltip, AreaChart, Area, 
 import { motion, AnimatePresence } from 'motion/react';
 
 import { useLocation } from 'react-router-dom';
-import { logUserActivity } from '../lib/api';
+import { supabase } from '../lib/supabase';
+
+const logUserActivity = async (action: string, details: string) => {
+  try {
+    const { data: { session } } = await supabase.auth.getSession();
+    await supabase.from('activity_logs').insert([{
+      user_email: session?.user?.email || 'Guest',
+      action,
+      details,
+      timestamp: new Date().toISOString()
+    }]);
+  } catch (e) {
+    console.warn('Logging omitted', e);
+  }
+};
 
 type SortConfig = {
   key: keyof ReturnType<typeof useMarketData>['data'][0] | null;
