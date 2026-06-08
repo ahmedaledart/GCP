@@ -82,11 +82,17 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   const fetchPlatformUser = async (userId: string, isMounted: boolean) => {
     try {
-      const { data, error } = await supabase
+      const timeoutPromise = new Promise((_, reject) => 
+        setTimeout(() => reject(new Error('Platform user fetch timed out')), 5000)
+      );
+      
+      const fetchPromise = supabase
         .from('platform_users')
         .select('*')
         .eq('auth_user_id', userId)
         .single();
+
+      const { data, error } = await Promise.race([fetchPromise, timeoutPromise]) as any;
 
       if (error) {
         console.warn('Platform user fetch warning:', error.message);
@@ -94,8 +100,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       } else {
         if (isMounted) setPlatformUser(data);
       }
-    } catch (err) {
-      console.error('Error fetching platform user:', err);
+    } catch (err: any) {
+      console.error('Error fetching platform user:', err.message || err);
       if (isMounted) setPlatformUser(null);
     }
   };

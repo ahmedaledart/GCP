@@ -138,6 +138,7 @@ const AdminInner = () => {
   });
   const [loading, setLoading] = useState(true);
   const [fetchError, setFetchError] = useState<string | null>(null);
+  const [adminFetchError, setAdminFetchError] = useState<string | null>(null);
 
   // Form States
   const [editingItem, setEditingItem] = useState<any>(null);
@@ -219,39 +220,47 @@ const AdminInner = () => {
           const adminData = response.data;
           
           if (adminData) {
-          console.log('Admin profile:', adminData);
-          if (adminData.is_active) {
+            console.log('Admin profile:', adminData);
+            if (adminData.is_active) {
+              setIsAdmin(true);
+              setAdminUser(adminData);
+              setAdminFetchError(null);
+            } else {
+              setIsAdmin(false);
+              setAdminUser(null);
+            }
+          } else if (currentUser.email === ADMIN_EMAIL) {
+            console.log('Admin profile: Super Admin Hardcoded');
             setIsAdmin(true);
-            setAdminUser(adminData);
+            setAdminFetchError(null);
+            setAdminUser({
+              email: currentUser.email,
+              role: 'super_admin',
+              is_active: true,
+              can_manage_admins: true,
+              can_manage_prices: true,
+              can_manage_news: true,
+              can_manage_analysis: true,
+              can_manage_sectors: true
+            });
           } else {
             setIsAdmin(false);
             setAdminUser(null);
           }
-        } else if (currentUser.email === ADMIN_EMAIL) {
-          console.log('Admin profile: Super Admin Hardcoded');
-          setIsAdmin(true);
-          setAdminUser({
-            email: currentUser.email,
-            role: 'super_admin',
-            is_active: true,
-            can_manage_admins: true,
-            can_manage_prices: true,
-            can_manage_news: true,
-            can_manage_analysis: true,
-            can_manage_sectors: true
-          });
-        } else {
-          setIsAdmin(false);
-          setAdminUser(null);
-        }
-        } catch (err) {
+        } catch (err: any) {
           console.error('Error fetching admin profile in onAuthStateChange:', err);
+          if (err.message === 'Request Timeout' || err.message?.includes('fetch')) {
+            setAdminFetchError(err.message);
+          }
           setIsAdmin(false);
           setAdminUser(null);
+        } finally {
+          setLoading(false);
         }
       } else {
         setIsAdmin(false);
         setAdminUser(null);
+        setLoading(false);
       }
     });
 
@@ -293,6 +302,7 @@ const AdminInner = () => {
               if (adminData.is_active) {
                 setIsAdmin(true);
                 setAdminUser(adminData);
+                setAdminFetchError(null);
               } else {
                 setIsAdmin(false);
                 setAdminUser(null);
@@ -300,6 +310,7 @@ const AdminInner = () => {
             } else if (currentUser.email === ADMIN_EMAIL) {
               console.log('Admin profile (mount): Super Admin Hardcoded');
               setIsAdmin(true);
+              setAdminFetchError(null);
               setAdminUser({
                 email: currentUser.email,
                 role: 'super_admin',
@@ -315,8 +326,11 @@ const AdminInner = () => {
               setIsAdmin(false);
               setAdminUser(null);
             }
-          } catch (adminErr) {
+          } catch (adminErr: any) {
             console.error('Failed to parse admin data:', adminErr);
+            if (adminErr.message === 'Request Timeout' || adminErr.message?.includes('fetch')) {
+              setAdminFetchError(adminErr.message);
+            }
           }
         }
       } catch (e: any) {
@@ -351,43 +365,38 @@ const AdminInner = () => {
     try {
       setLoading(true);
       console.log('Dashboard loading started');
-      
-      const timeoutPromise = new Promise((_, reject) => 
-        setTimeout(() => reject(new Error('Request Timeout')), 5000)
-      );
+      setFetchError(null);
 
-      const fetchAllData = async () => {
-        const [
-          commRes,
-          newsRes,
-          sectorsRes,
-          analysesRes,
-          msgRes,
-          logsRes,
-          settingsRes
-        ] = await Promise.all([
-          supabase.from('commodities').select('*').order('created_at', { ascending: false }),
-          supabase.from('news').select('*').order('created_at', { ascending: false }),
-          supabase.from('sectors').select('*').order('sort_order', { ascending: true }),
-          supabase.from('analyses').select('*').order('created_at', { ascending: false }),
-          supabase.from('messages').select('*').order('created_at', { ascending: false }),
-          supabase.from('activity_logs').select('*').order('timestamp', { ascending: false }).limit(50),
-          supabase.from('platform_settings').select('*')
-        ]);
-        
-        return {
-          commData: commRes.data, commError: commRes.error,
-          newsData: newsRes.data, newsError: newsRes.error,
-          sectorsData: sectorsRes.data, secError: sectorsRes.error,
-          analysesData: analysesRes.data, anError: analysesRes.error,
-          msgData: msgRes.data, msgError: msgRes.error,
-          logsData: logsRes.data,
-          settingsData: settingsRes.data
-        };
+      const withTimeout = async (promise: Promise<any>, name: string) => {
+        const timeout = new Promise((resolve) => setTimeout(() => resolve({ data: null, error: { message: name + ' timeout' } }), 5000));
+        return Promise.race([promise, timeout]);
       };
 
-      const result = await Promise.race([fetchAllData(), timeoutPromise]) as any;
-      const { commData, commError, newsData, newsError, sectorsData, secError, analysesData, anError, msgData, msgError, logsData, settingsData } = result;
+      const [
+        commRes,
+        newsRes,
+        sectorsRes,
+        analysesRes,
+        msgRes,
+        logsRes,
+        settingsRes
+      ] = await Promise.all([
+        withTimeout(supabase.from('commodities').select('*').order('created_at', { ascending: false }), 'commodities'),
+        withTimeout(supabase.from('news').select('*').order('created_at', { ascending: false }), 'news'),
+        withTimeout(supabase.from('sectors').select('*').order('sort_order', { ascending: true }), 'sectors'),
+        withTimeout(supabase.from('analyses').select('*').order('created_at', { ascending: false }), 'analyses'),
+        withTimeout(supabase.from('messages').select('*').order('created_at', { ascending: false }), 'messages'),
+        withTimeout(supabase.from('activity_logs').select('*').order('timestamp', { ascending: false }).limit(50), 'logs'),
+        withTimeout(supabase.from('platform_settings').select('*'), 'settings')
+      ]) as any[];
+
+      const { data: commData, error: commError } = commRes;
+      const { data: newsData, error: newsError } = newsRes;
+      const { data: sectorsData, error: secError } = sectorsRes;
+      const { data: analysesData, error: anError } = analysesRes;
+      const { data: msgData, error: msgError } = msgRes;
+      const { data: logsData } = logsRes;
+      const { data: settingsData } = settingsRes;
 
       // Commodities
       if (commError) { console.error('Error fetching commodities:', commError); }
@@ -645,6 +654,21 @@ const AdminInner = () => {
            <p className="text-gray-400 text-xs mb-4">{fetchError}</p>
            <button onClick={() => window.location.reload()} className="px-6 py-2 bg-red-500/10 text-red-500 border border-red-500/50 rounded-lg hover:bg-red-500 hover:text-white transition-all font-bold">
              تحديث
+           </button>
+        </div>
+      </div>
+    );
+  }
+  
+  if (adminFetchError) {
+    return (
+      <div className="min-h-screen bg-[#050A18] flex items-center justify-center p-4">
+        <div className="flex flex-col items-center justify-center gap-4 flex flex-col p-8 bg-[#0A1128] rounded-xl border border-red-500/20 text-center">
+           <AlertTriangle size={48} className="text-red-500 mb-4" />
+           <p className="text-white font-bold mb-2">تعذر تحميل بيانات المسؤول، حاول تحديث الصفحة.</p>
+           <p className="text-gray-400 text-xs mb-4">{adminFetchError}</p>
+           <button onClick={() => window.location.reload()} className="px-6 py-2 bg-red-500/10 text-red-500 border border-red-500/50 rounded-lg hover:bg-red-500 hover:text-white transition-all font-bold">
+             إعادة المحاولة
            </button>
         </div>
       </div>
