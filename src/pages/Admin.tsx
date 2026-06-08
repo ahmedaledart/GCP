@@ -203,14 +203,21 @@ const AdminInner = () => {
       setUser(currentUser);
       
       if (currentUser && currentUser.email) {
-        // We will fetch admin user if logged in (mostly for persistent session refresh)
-        const { data: adminData } = await supabase
-          .from('admin_users')
-          .select('*')
-          .ilike('email', currentUser.email)
-          .single();
+        try {
+          const timeoutPromise = new Promise((_, reject) => 
+             setTimeout(() => reject(new Error('Request Timeout')), 5000)
+          );
+          
+          const fetchPromise = supabase
+            .from('admin_users')
+            .select('*')
+            .ilike('email', currentUser.email)
+            .single();
 
-        if (adminData) {
+          const response = (await Promise.race([fetchPromise, timeoutPromise])) as any;
+          const adminData = response.data;
+          
+          if (adminData) {
           console.log('Admin profile:', adminData);
           if (adminData.is_active) {
             setIsAdmin(true);
@@ -242,6 +249,11 @@ const AdminInner = () => {
              await supabase.auth.signOut();
           }
         }
+        } catch (err) {
+          console.error('Error fetching admin profile in onAuthStateChange:', err);
+          setIsAdmin(false);
+          setAdminUser(null);
+        }
       } else {
         setIsAdmin(false);
         setAdminUser(null);
@@ -263,11 +275,23 @@ const AdminInner = () => {
           setUser(currentUser);
           
           try {
-            const { data: adminData } = await supabase
+            const timeoutPromise = new Promise((_, reject) => 
+               setTimeout(() => reject(new Error('Request Timeout')), 5000)
+            );
+            
+            const fetchPromise = supabase
               .from('admin_users')
               .select('*')
               .ilike('email', currentUser.email)
               .single();
+
+            const response = (await Promise.race([fetchPromise, timeoutPromise])) as any;
+            const adminData = response.data;
+            const adminQueryError = response.error;
+
+            if (adminQueryError && adminQueryError.code !== 'PGRST116') {
+               console.warn('Admin query warning:', adminQueryError.message);
+            }
 
             if (adminData) {
               console.log('Admin profile (mount):', adminData);

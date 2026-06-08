@@ -34,14 +34,41 @@ export const AdminUsersTab = ({ currentUser, adminUser }: { currentUser: any, ad
   ];
 
   useEffect(() => {
-    fetchUsers();
-  }, []);
+    if (adminUser?.role === 'super_admin' || adminUser?.can_manage_admins === true) {
+      fetchUsers();
+    } else {
+      setLoading(false);
+    }
+  }, [adminUser]);
 
   const fetchUsers = async () => {
-    const { data } = await supabase.from('admin_users').select('*').order('created_at', { ascending: false });
-    if (data) setUsers(data);
-    setLoading(false);
+    try {
+      setLoading(true);
+      const timeoutPromise = new Promise((_, reject) => 
+        setTimeout(() => reject(new Error('Request Timeout')), 5000)
+      );
+      
+      const fetchPromise = supabase.from('admin_users').select('*').order('created_at', { ascending: false });
+      
+      const { data, error } = (await Promise.race([fetchPromise, timeoutPromise])) as any;
+      if (error) throw error;
+      if (data) setUsers(data);
+    } catch (error: any) {
+      console.error('Admin users fetch error:', error);
+      alert(language === 'ar' ? 'تعذر تحميل بيانات المسؤولين: ' + error.message : 'Failed to load admin users: ' + error.message);
+    } finally {
+      setLoading(false);
+    }
   };
+
+  if (adminUser?.role !== 'super_admin' && adminUser?.can_manage_admins !== true) {
+    return (
+      <div className="bg-[#0A1128] rounded-3xl border border-[#1C2E5A] overflow-hidden shadow-xl min-h-[400px] flex flex-col items-center justify-center p-8 text-center text-gray-500">
+        <Shield size={64} className="mb-4 opacity-20 text-red-500" />
+        <p className="text-xl font-black text-white mb-2">{language === 'ar' ? 'ليس لديك صلاحية إدارة المسؤولين' : 'You do not have permission to manage admins'}</p>
+      </div>
+    );
+  }
 
   const handleSave = async () => {
     if (!enforcePermission('can_manage_admins', 'المشرفين')) return;
