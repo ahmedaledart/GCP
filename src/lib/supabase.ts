@@ -6,14 +6,14 @@ const supabaseUrl =
 
 const supabaseAnonKey =
   import.meta.env.VITE_SUPABASE_ANON_KEY ||
-  'PUT_SUPABASE_ANON_KEY_HERE';
+  'sb_publishable_J-BGf6na5ax4-_oSdJ4Zsw_qdKaerP9';
 
 export const supabase = createClient(supabaseUrl, supabaseAnonKey, {
   auth: {
     persistSession: true,
     autoRefreshToken: true,
     detectSessionInUrl: false,
-    storageKey: 'gcp-auth-clean-v3'
+    storageKey: 'gcp-auth-final-v3'
   }
 });
 

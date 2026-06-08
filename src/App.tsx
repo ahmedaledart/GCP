@@ -157,7 +157,8 @@ const AppRoutes = () => {
       <Route path="/services" element={<Services />} />
       <Route path="/auth" element={<Auth />} />
       <Route path={formattedPath} element={<Admin />} />
-      <Route path="/admin/login" element={<Admin />} />
+      <Route path="/admin" element={<Admin />} />
+      <Route path="/admin/:tab" element={<Admin />} />
       <Route path="*" element={<Home />} />
     </Routes>
   );

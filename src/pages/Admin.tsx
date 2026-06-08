@@ -8,7 +8,7 @@ import {
   ChevronDown, Filter, Calendar, Activity, PieChart as PieChartIcon, ShieldAlert,
   Briefcase, Network, Coins, FileBarChart, BarChart2, AlertTriangle, Layout, Scale, DatabaseBackup
 } from 'lucide-react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useParams } from 'react-router-dom';
 import { motion, AnimatePresence } from 'motion/react';
 import * as XLSX from 'xlsx';
 import { 
@@ -82,9 +82,22 @@ const clearStorageKeys = () => {
 const AdminInner = () => {
   const { t, language } = useLanguage();
   const navigate = useNavigate();
+  const { tab } = useParams<{ tab?: string }>();
   const [user, setUser] = useState<any>(null);
   const [isAdmin, setIsAdmin] = useState(false);
-  const [activeTab, setActiveTab] = useState('dashboard');
+  const [activeTab, setActiveTabInternal] = useState(tab && tab !== 'login' ? tab : 'dashboard');
+  const setActiveTab = (newTab: string) => {
+    setActiveTabInternal(newTab);
+    navigate(`/admin/${newTab}`, { replace: true });
+  };
+
+  useEffect(() => {
+    if (isAdmin && tab === 'login') {
+      navigate('/admin/dashboard', { replace: true });
+    } else if (isAdmin && tab && tab !== 'login') {
+      setActiveTabInternal(tab);
+    }
+  }, [tab, isAdmin, navigate]);
   const [isLoggingIn, setIsLoggingIn] = useState(false);
   const [loginEmail, setLoginEmail] = useState('');
   const [loginPassword, setLoginPassword] = useState('');
@@ -195,6 +208,7 @@ const AdminInner = () => {
     // Listen to Supabase Auth changes
     const { data: { subscription } } = supabase.auth.onAuthStateChange(async (event, session) => {
       const currentUser = session?.user;
+      console.log('Session user:', currentUser?.email);
       setUser(currentUser);
       
       if (currentUser && currentUser.email) {
@@ -206,6 +220,7 @@ const AdminInner = () => {
           .single();
 
         if (adminData) {
+          console.log('Admin profile:', adminData);
           if (adminData.is_active) {
             setIsAdmin(true);
             setAdminUser(adminData);
@@ -217,6 +232,7 @@ const AdminInner = () => {
             }
           }
         } else if (currentUser.email === ADMIN_EMAIL) {
+          console.log('Admin profile: Super Admin Hardcoded');
           setIsAdmin(true);
           setAdminUser({
             email: currentUser.email,
@@ -240,6 +256,7 @@ const AdminInner = () => {
 
     // Check current session on mount
     const checkSession = async () => {
+      console.log('Auth loading:', true);
       try {
         const { data: { session }, error: sessionError } = await supabase.auth.getSession();
         if (sessionError) {
@@ -248,6 +265,7 @@ const AdminInner = () => {
 
         if (session?.user) {
           const currentUser = session.user;
+          console.log('Session user (mount):', currentUser?.email);
           setUser(currentUser);
           
           try {
@@ -257,10 +275,16 @@ const AdminInner = () => {
               .ilike('email', currentUser.email)
               .single();
 
-            if (adminData?.is_active) {
-              setIsAdmin(true);
-              setAdminUser(adminData);
+            if (adminData) {
+              console.log('Admin profile (mount):', adminData);
+              if (adminData.is_active) {
+                setIsAdmin(true);
+                setAdminUser(adminData);
+              } else {
+                await supabase.auth.signOut();
+              }
             } else if (currentUser.email === ADMIN_EMAIL) {
+              console.log('Admin profile (mount): Super Admin Hardcoded');
               setIsAdmin(true);
               setAdminUser({
                 email: currentUser.email,
@@ -280,6 +304,7 @@ const AdminInner = () => {
       } catch (e: any) {
         console.error('Check session fatal error:', e.message);
       } finally {
+        console.log('Auth loading:', false);
         setLoading(false);
       }
     };
