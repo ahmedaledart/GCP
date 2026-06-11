@@ -135,6 +135,8 @@ const MaintenanceMode = () => {
   );
 };
 
+import DisabledAdmin from './pages/DisabledAdmin';
+
 const AppRoutes = () => {
   const { settings } = useSettings();
   const location = useLocation();
@@ -156,17 +158,20 @@ const AppRoutes = () => {
       <Route path="/disclaimer" element={<LegalPage />} />
       <Route path="/services" element={<Services />} />
       <Route path="/auth" element={<Auth />} />
-      <Route path={formattedPath} element={<Admin />} />
-      <Route path="/admin" element={<Admin />} />
-      <Route path="/admin/:tab" element={<Admin />} />
+      <Route path={formattedPath} element={<DisabledAdmin />} />
+      <Route path="/admin" element={<DisabledAdmin />} />
+      <Route path="/admin/*" element={<DisabledAdmin />} />
       <Route path="*" element={<Home />} />
     </Routes>
   );
 };
 
+import { useVisitorTracking } from './hooks/useVisitorTracking';
+
 function AppContent() {
   const { settings, loading } = useSettings();
   const location = useLocation();
+  useVisitorTracking();
 
   if (loading) return null; // Wait for settings to load to avoid flicker
 
