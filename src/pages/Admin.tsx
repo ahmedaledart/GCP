@@ -485,7 +485,19 @@ const AdminInner = () => {
       }
 
       // Platform Settings
-      if (settingsData) {
+      const defaultSettings = {
+        isSiteActive: true,
+        maintenanceMessageAr: '',
+        maintenanceMessageEn: '',
+        contactEmail: '',
+        contactPhone: '',
+        platformName: 'منصة تسعير السلع العالمية',
+        language: 'ar',
+        direction: 'rtl'
+      };
+
+      if (settingsError) { console.error('Settings timeout:', settingsError); }
+      if (settingsData && !settingsError) {
           const settingsObj = { ...siteSettings };
           settingsData.forEach((s: any) => {
               if (s.key === 'platform_status') settingsObj.isSiteActive = s.value === 'open';
@@ -497,11 +509,14 @@ const AdminInner = () => {
               if (s.key === 'logo_url') settingsObj.logoUrl = s.value;
           });
           setSiteSettings(settingsObj);
+      } else {
+        // Fallback defaults on failure
+        setSiteSettings(defaultSettings);
       }
 
       // Stats
       let visitorCount = 0;
-      if (settingsData) {
+      if (settingsData && !settingsError) {
         const visitorSetting = settingsData.find((s: any) => s.key === 'total_visitors');
         if (visitorSetting) visitorCount = parseInt(visitorSetting.value as string) || 0;
       }
@@ -516,7 +531,9 @@ const AdminInner = () => {
 
     } catch (e: any) {
       console.error('Dashboard error:', e);
-      setFetchError(e.message || 'تعذر تحميل البيانات');
+      // We don't set fetchError here so it doesn't block the dashboard.
+      // Individual sections will handle empty data by showing 'No Data' or their own error.
+      // We could use a toast mechanism instead.
     } finally {
       setLoading(false);
     }
@@ -1423,9 +1440,56 @@ const AdminInner = () => {
               exit={{ opacity: 0, y: -15 }}
               transition={{ duration: 0.3, ease: "easeOut" }}
             >
-              {activeTab === 'dashboard' && <DashboardTab />}
-              {activeTab === 'platform_status' && <StatusTab />}
-              {activeTab === 'commodities' && (
+              {(() => {
+                const allowPrices = adminUser?.role === 'super_admin' || adminUser?.can_manage_prices;
+                const allowNews = adminUser?.role === 'super_admin' || adminUser?.can_manage_news;
+                const allowAnalyses = adminUser?.role === 'super_admin' || adminUser?.can_manage_analysis;
+                const allowSectors = adminUser?.role === 'super_admin' || adminUser?.can_manage_sectors;
+                const allowAdmins = adminUser?.role === 'super_admin' || adminUser?.can_manage_admins;
+
+                const permissionMap: Record<string, boolean> = {
+                  dashboard: true,
+                  platform_status: allowAdmins,
+                  commodities: allowPrices,
+                  news: allowNews,
+                  analyses: allowAnalyses,
+                  messages: allowPrices || allowAdmins,
+                  import_csv: allowPrices,
+                  import_excel: allowPrices,
+                  settings: allowAdmins,
+                  logs: allowAdmins,
+                  sectors: allowSectors,
+                  dataSources: allowAdmins,
+                  exchangeRates: allowPrices,
+                  admin_users: allowAdmins,
+                  platform_users: allowAdmins,
+                  platform_settings: allowAdmins,
+                  legal: allowAdmins,
+                  backup: allowAdmins,
+                  interface: allowAdmins,
+                  charts: allowAdmins,
+                  alerts: allowAdmins,
+                  api_sources: allowPrices,
+                };
+
+                const hasAccess = permissionMap[activeTab] !== false;
+
+                if (!hasAccess) {
+                  return (
+                    <div className="flex flex-col items-center justify-center p-12 bg-[#0A1128] rounded-xl border border-red-500/20 text-center min-h-[400px]">
+                      <ShieldAlert className="text-red-500 mb-4 opacity-50" size={64} />
+                      <h3 className="text-xl font-bold text-white mb-2">
+                        {language === 'ar' ? 'ليس لديك صلاحية الوصول إلى هذا القسم' : 'You do not have permission to access this section'}
+                      </h3>
+                    </div>
+                  );
+                }
+
+                return (
+                  <>
+                    {activeTab === 'dashboard' && <DashboardTab />}
+                    {activeTab === 'platform_status' && <StatusTab />}
+                    {activeTab === 'commodities' && (
                 <div className="space-y-8">
                   <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-6">
                     <h3 className="text-xl font-black flex items-center gap-3 text-white uppercase tracking-tight">
@@ -2326,6 +2390,9 @@ const AdminInner = () => {
               {activeTab === 'charts' && <ChartsTab />}
               {activeTab === 'alerts' && <AlertsTab />}
               {activeTab === 'api_sources' && <ApiSourcesTab />}
+            </>
+          );
+        })()}
             </motion.div>
           </AnimatePresence>
         </div>

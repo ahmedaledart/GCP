@@ -1,5 +1,5 @@
 import React, { useState, useMemo, useRef, useEffect } from 'react';
-import { Sector, SectorEn } from '../data/mockData';
+import { Sector, SectorEn } from '../types';
 import { useMarketData } from '../context/MarketContext';
 import { Search, Filter, Download, ArrowUpDown, ChevronDown, ChevronUp, FileText, FileSpreadsheet, FileCode, Wifi, WifiOff, Columns, X, TrendingUp, TrendingDown, Minus, Info, Activity, AlertCircle } from 'lucide-react';
 import { format } from 'date-fns';

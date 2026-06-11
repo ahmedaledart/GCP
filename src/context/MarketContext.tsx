@@ -1,6 +1,6 @@
 import React, { createContext, useContext, useEffect, useState } from 'react';
 import { supabase } from '../lib/supabase';
-import { Commodity } from '../data/mockData';
+import { Commodity } from '../types';
 
 interface MarketContextType {
   data: Commodity[];

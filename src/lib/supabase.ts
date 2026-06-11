@@ -13,7 +13,7 @@ export const supabase = createClient(supabaseUrl, supabaseAnonKey, {
     persistSession: true,
     autoRefreshToken: true,
     detectSessionInUrl: false,
-    storageKey: 'gcp-auth-final-v3'
+    storageKey: 'gcp-auth-stable-v1'
   }
 });
 
