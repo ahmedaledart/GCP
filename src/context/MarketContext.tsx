@@ -53,15 +53,18 @@ export const MarketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     try {
       const fetchStart = Date.now();
       
-      const timeoutPromise = new Promise((_, reject) => 
-        setTimeout(() => reject(new Error('Market fetch timed out')), 5000)
+      const timeoutPromise = new Promise((resolve) => 
+        setTimeout(() => resolve({ data: null, error: { message: 'Market fetch timed out' } }), 5000)
       );
 
       const { data: commodities, error: supaError } = await Promise.race([
         supabase
           .from('commodities')
           .select('*')
-          .order('sector', { ascending: true }),
+          .eq('status', 'active')
+          .eq('is_visible', true)
+          .order('updated_at', { ascending: false })
+          .limit(50),
         timeoutPromise
       ]) as any;
 
@@ -124,8 +127,9 @@ export const MarketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       }
     } catch (err: any) {
       console.warn('Supabase commodities fetch error:', err);
+      // We don't block the app if fetch fails, just set empty data or keep existing
       if (data.length === 0) {
-        setError(err.message || 'فشل الاتصال بـ Supabase.');
+        setError('تعذر تحميل البيانات');
         setConnected(false);
         setIsMockData(false);
         setData([]);
@@ -137,12 +141,20 @@ export const MarketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
 
   const fetchNews = async () => {
     try {
-      const { data: newsData, error: newsError } = await supabase
-        .from('news')
-        .select('*')
-        .eq('status', 'published')
-        .eq('is_visible', true)
-        .order('created_at', { ascending: false });
+      const timeoutPromise = new Promise((resolve) => 
+        setTimeout(() => resolve({ data: null, error: { message: 'News timeout' } }), 5000)
+      );
+
+      const { data: newsData, error: newsError } = await Promise.race([
+        supabase
+          .from('news')
+          .select('*')
+          .eq('status', 'published')
+          .eq('is_visible', true)
+          .order('created_at', { ascending: false })
+          .limit(5),
+        timeoutPromise
+      ]) as any;
       
       if (!newsError && newsData) {
         setNews(newsData);
@@ -154,11 +166,19 @@ export const MarketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
 
   const fetchAnalyses = async () => {
     try {
-      const { data: analysesData, error: analysesError } = await supabase
-        .from('analyses')
-        .select('*')
-        .eq('status', 'published')
-        .order('created_at', { ascending: false });
+      const timeoutPromise = new Promise((resolve) => 
+        setTimeout(() => resolve({ data: null, error: { message: 'Analyses timeout' } }), 5000)
+      );
+
+      const { data: analysesData, error: analysesError } = await Promise.race([
+        supabase
+          .from('analyses')
+          .select('*')
+          .eq('status', 'published')
+          .order('created_at', { ascending: false })
+          .limit(5),
+        timeoutPromise
+      ]) as any;
       
       if (!analysesError && analysesData) {
         setAnalyses(analysesData);
@@ -174,11 +194,19 @@ export const MarketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     historySymbolRef.current = sym;
     
     try {
-      const { data: historyData, error: historyError } = await supabase
-        .from('commodity_price_history')
-        .select('*')
-        .eq('symbol', sym)
-        .order('recorded_at', { ascending: true });
+      const timeoutPromise = new Promise((resolve) => 
+        setTimeout(() => resolve({ data: null, error: { message: 'History timeout' } }), 5000)
+      );
+
+      const { data: historyData, error: historyError } = await Promise.race([
+        supabase
+          .from('commodity_price_history')
+          .select('*')
+          .eq('symbol', sym)
+          .order('recorded_at', { ascending: true })
+          .limit(50),
+        timeoutPromise
+      ]) as any;
       
       if (!historyError && historyData) {
         setHistory(historyData);
@@ -189,44 +217,17 @@ export const MarketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
   };
 
   useEffect(() => {
-    let commoditySubscription: any = null;
-    let sectorSubscription: any = null;
-    let newsSubscription: any = null;
-    let analysesSubscription: any = null;
-    let historySubscription: any = null;
     let isMounted = true;
 
     // Initial fetches
     fetchCommodities();
     fetchNews();
     fetchAnalyses();
-    // fetchHistory(); // Don't fetch all history by default, wait for requests or just let it be empty
 
-    // Subscriptions with robust fallback
-    const handleSubscribe = (status: string) => {
-      if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT') {
-        console.warn('Realtime unavailable, using normal Supabase fetch');
-      }
-    };
-
-    commoditySubscription = supabase.channel('commodities-realtime').on('postgres_changes', { event: '*', schema: 'public', table: 'commodities' }, () => fetchCommodities()).subscribe(handleSubscribe);
-    sectorSubscription = supabase.channel('sectors-realtime').on('postgres_changes', { event: '*', schema: 'public', table: 'sectors' }, () => fetchCommodities()).subscribe(handleSubscribe);
-    newsSubscription = supabase.channel('news-realtime').on('postgres_changes', { event: '*', schema: 'public', table: 'news' }, () => fetchNews()).subscribe(handleSubscribe);
-    analysesSubscription = supabase.channel('analyses-realtime').on('postgres_changes', { event: '*', schema: 'public', table: 'analyses' }, () => fetchAnalyses()).subscribe(handleSubscribe);
-    historySubscription = supabase.channel('history-realtime').on('postgres_changes', { event: '*', schema: 'public', table: 'commodity_price_history' }, () => {
-      // Re-fetch current history if it exists
-      if (historySymbolRef.current) {
-        fetchHistory(historySymbolRef.current);
-      }
-    }).subscribe(handleSubscribe);
+    // Removed realtime subscriptions temporarily to improve load speed
 
     return () => {
       isMounted = false;
-      if (commoditySubscription) supabase.removeChannel(commoditySubscription);
-      if (sectorSubscription) supabase.removeChannel(sectorSubscription);
-      if (newsSubscription) supabase.removeChannel(newsSubscription);
-      if (analysesSubscription) supabase.removeChannel(analysesSubscription);
-      if (historySubscription) supabase.removeChannel(historySubscription);
     };
   }, []);
 

@@ -124,21 +124,10 @@ export const SettingsProvider: React.FC<{ children: React.ReactNode }> = ({ chil
 
     fetchAllSettings();
 
-    // Subscribe to platform_settings changes
-    const subscription = supabase
-      .channel('platform-settings-all-channel')
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'platform_settings' }, () => {
-        fetchAllSettings();
-      })
-      .subscribe((status) => {
-        if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT') {
-          console.warn('Realtime unavailable, using normal Supabase fetch');
-        }
-      });
-
+    // subscription removed temporarily for performance
+    
     return () => {
       isMounted = false;
-      supabase.removeChannel(subscription);
     };
   }, []);
 

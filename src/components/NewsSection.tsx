@@ -25,12 +25,6 @@ export const NewsSection = () => {
 
   useEffect(() => {
     fetchRealNewsAndInsights();
-    
-    const interval = setInterval(() => {
-      fetchRealNewsAndInsights();
-    }, 3600000);
-
-    return () => clearInterval(interval);
   }, [language]);
 
   const fetchRealNewsAndInsights = async () => {

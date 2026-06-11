@@ -2,7 +2,6 @@ import React, { useState, useEffect } from 'react';
 import { Hero } from '../components/Hero';
 import { TopCommodities } from '../components/TopCommodities';
 import { AdvancedTable } from '../components/AdvancedTable';
-import { AnalyticsCharts } from '../components/AnalyticsCharts';
 import { NewsSection } from '../components/NewsSection';
 import { WhyChooseUs } from '../components/WhyChooseUs';
 import { FileText, ChevronRight, TrendingUp } from 'lucide-react';
@@ -15,6 +14,7 @@ export const Home = () => {
   const [latestReport, setLatestReport] = useState<any>(null);
 
   useEffect(() => {
+    let isMounted = true;
     const fetchLatestReport = async () => {
       try {
         const { data } = await supabase
@@ -23,9 +23,9 @@ export const Home = () => {
           .eq('status', 'published')
           .order('created_at', { ascending: false })
           .limit(1)
-          .single();
+          .maybeSingle();
         
-        if (data) {
+        if (isMounted && data) {
           setLatestReport({ 
             id: data.id, 
             titleAr: data.title_ar, 
@@ -35,10 +35,11 @@ export const Home = () => {
           });
         }
       } catch (e) {
-        console.error('Error fetching latest report:', e);
+        console.warn('Error fetching latest report:', e);
       }
     };
     fetchLatestReport();
+    return () => { isMounted = false; };
   }, []);
 
   return (
@@ -90,7 +91,6 @@ export const Home = () => {
       </section>
 
       <AdvancedTable />
-      <AnalyticsCharts />
       <WhyChooseUs />
       <NewsSection />
     </>

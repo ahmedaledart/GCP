@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { Suspense, lazy } from 'react';
 import { Routes, Route, useLocation, Navigate, useNavigate } from 'react-router-dom';
 import { ShieldAlert } from 'lucide-react';
 import { Header } from './components/Header';
@@ -6,13 +6,7 @@ import { Footer } from './components/Footer';
 import { LiveTicker } from './components/LiveTicker';
 import { NewsTicker } from './components/NewsTicker';
 import { Home } from './pages/Home';
-import { Markets } from './pages/Markets';
-import { Analytics } from './pages/Analytics';
-import { News } from './pages/News';
-import { Reports } from './pages/Reports';
-import { Contact } from './pages/Contact';
-import { FAQ } from './pages/FAQ';
-import { Admin } from './pages/Admin';
+import { Auth } from './pages/Auth';
 import { LegalPage } from './pages/LegalPage';
 import { Services } from './components/Services';
 import { VisitorTracker } from './components/VisitorTracker';
@@ -21,9 +15,17 @@ import { LanguageProvider, useLanguage } from './context/LanguageContext';
 import { SettingsProvider, useSettings } from './context/SettingsContext';
 import { MarketProvider } from './context/MarketContext';
 import { AuthProvider } from './context/AuthContext';
-import { Auth } from './pages/Auth';
 import { hasSupabaseConfig } from './lib/supabase';
 import { AlertCircle, PlusCircle } from 'lucide-react';
+import DisabledAdmin from './pages/DisabledAdmin';
+import { useVisitorTracking } from './hooks/useVisitorTracking';
+
+const Markets = lazy(() => import('./pages/Markets').then(m => ({ default: m.Markets })));
+const Analytics = lazy(() => import('./pages/Analytics').then(m => ({ default: m.Analytics })));
+const News = lazy(() => import('./pages/News').then(m => ({ default: m.News })));
+const Reports = lazy(() => import('./pages/Reports').then(m => ({ default: m.Reports })));
+const Contact = lazy(() => import('./pages/Contact').then(m => ({ default: m.Contact })));
+const FAQ = lazy(() => import('./pages/FAQ').then(m => ({ default: m.FAQ })));
 
 const APP_VERSION = '2026-05-10-02';
 
@@ -135,45 +137,57 @@ const MaintenanceMode = () => {
   );
 };
 
-import DisabledAdmin from './pages/DisabledAdmin';
-
 const AppRoutes = () => {
   const { settings } = useSettings();
   const location = useLocation();
   const adminPath = settings.adminPath || '/admin';
   const formattedPath = adminPath.startsWith('/') ? adminPath : `/${adminPath}`;
 
+  const LoadingFallback = () => (
+    <div className="min-h-screen bg-[#050A18] flex items-center justify-center">
+      <div className="w-16 h-16 border-4 border-[#1C2E5A] border-t-[#D4AF37] rounded-full animate-spin"></div>
+    </div>
+  );
+
   return (
-    <Routes>
-      <Route path="/" element={<Home />} />
-      <Route path="/markets" element={<Markets />} />
-      <Route path="/analytics" element={<Analytics />} />
-      <Route path="/analysis" element={<Analytics />} />
-      <Route path="/news" element={<News />} />
-      <Route path="/reports" element={<Reports />} />
-      <Route path="/contact" element={<Contact />} />
-      <Route path="/faq" element={<FAQ />} />
-      <Route path="/privacy" element={<LegalPage />} />
-      <Route path="/terms" element={<LegalPage />} />
-      <Route path="/disclaimer" element={<LegalPage />} />
-      <Route path="/services" element={<Services />} />
-      <Route path="/auth" element={<Auth />} />
-      <Route path={formattedPath} element={<DisabledAdmin />} />
-      <Route path="/admin" element={<DisabledAdmin />} />
-      <Route path="/admin/*" element={<DisabledAdmin />} />
-      <Route path="*" element={<Home />} />
-    </Routes>
+    <Suspense fallback={<LoadingFallback />}>
+      <Routes>
+        <Route path="/" element={<Home />} />
+        <Route path="/markets" element={<Markets />} />
+        <Route path="/analytics" element={<Analytics />} />
+        <Route path="/analysis" element={<Analytics />} />
+        <Route path="/news" element={<News />} />
+        <Route path="/reports" element={<Reports />} />
+        <Route path="/contact" element={<Contact />} />
+        <Route path="/faq" element={<FAQ />} />
+        <Route path="/privacy" element={<LegalPage />} />
+        <Route path="/terms" element={<LegalPage />} />
+        <Route path="/disclaimer" element={<LegalPage />} />
+        <Route path="/services" element={<Services />} />
+        <Route path="/auth" element={<Auth />} />
+        <Route path={formattedPath} element={<DisabledAdmin />} />
+        <Route path="/admin" element={<DisabledAdmin />} />
+        <Route path="/admin/*" element={<DisabledAdmin />} />
+        <Route path="*" element={<Home />} />
+      </Routes>
+    </Suspense>
   );
 };
-
-import { useVisitorTracking } from './hooks/useVisitorTracking';
 
 function AppContent() {
   const { settings, loading } = useSettings();
   const location = useLocation();
   useVisitorTracking();
 
-  if (loading) return null; // Wait for settings to load to avoid flicker
+  if (loading) {
+    return (
+      <div className="min-h-screen bg-[#050A18] flex items-center justify-center">
+        <div className="flex flex-col items-center gap-4">
+          <div className="w-16 h-16 border-4 border-[#1C2E5A] border-t-[#D4AF37] rounded-full animate-spin"></div>
+        </div>
+      </div>
+    );
+  }
 
   const adminPath = settings.adminPath || '/admin';
   const formattedPath = adminPath.startsWith('/') ? adminPath : `/${adminPath}`;
