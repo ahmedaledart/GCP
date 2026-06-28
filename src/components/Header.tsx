@@ -137,10 +137,7 @@ export const Header = () => {
           <NavLink to="/reports" className={navLinkClass}>{t('reports')}</NavLink>
           <NavLink to="/faq" className={navLinkClass}>{t('faq')}</NavLink>
           {isAdmin && (
-            <Link to="/admin" className="px-3 py-1 bg-[#D4AF37]/10 text-[#D4AF37] rounded-lg border border-[#D4AF37]/30 text-xs font-bold hover:bg-[#D4AF37]/20 transition-all">
-              {language === 'ar' ? 'لوحة التحكم' : 'Admin Panel'}
-            </Link>
-          )}
+           
         </nav>
 
         {/* Actions */}
